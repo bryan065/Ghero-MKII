@@ -99,6 +99,8 @@
 #include "driver/rtc_io.h"
 #include "InterruptButton.h"
 
+#include <NimBLEDevice.h>
+
 // DEBUG
 //#define DEBUG
 
@@ -147,11 +149,11 @@ constexpr uint8_t PIN_RIGHT       = 21;
 constexpr uint8_t PIN_WHAMMY_ADC  = 9; // ADC2_2
 
 // Interrupt pins
-InterruptButton fretGreen   (PIN_FRET_GREEN, LOW, GPIO_MODE_INPUT, 750, 250, 333, 5000);
-InterruptButton fretRed     (PIN_FRET_RED, LOW, GPIO_MODE_INPUT, 750, 250, 333, 5000);
-InterruptButton fretYellow  (PIN_FRET_YELLOW, LOW, GPIO_MODE_INPUT, 750, 250, 333, 5000);
-InterruptButton fretBlue    (PIN_FRET_BLUE, LOW, GPIO_MODE_INPUT, 750, 250, 333, 5000);
-InterruptButton fretOrange  (PIN_FRET_ORANGE, LOW, GPIO_MODE_INPUT, 750, 250, 333, 5000);
+InterruptButton fretGreen   (PIN_FRET_GREEN, LOW, GPIO_MODE_INPUT, 750, 250, 333, 2000);
+InterruptButton fretRed     (PIN_FRET_RED, LOW, GPIO_MODE_INPUT, 750, 250, 333, 2000);
+InterruptButton fretYellow  (PIN_FRET_YELLOW, LOW, GPIO_MODE_INPUT, 750, 250, 333, 2000);
+InterruptButton fretBlue    (PIN_FRET_BLUE, LOW, GPIO_MODE_INPUT, 750, 250, 333, 2000);
+InterruptButton fretOrange  (PIN_FRET_ORANGE, LOW, GPIO_MODE_INPUT, 750, 250, 333, 2000);
 
 InterruptButton strumUp     (PIN_STRUM_UP, LOW, GPIO_MODE_INPUT, 750, 250, 333, 5000);
 InterruptButton strumDown   (PIN_STRUM_DOWN, LOW, GPIO_MODE_INPUT, 750, 250, 333, 5000);
@@ -290,11 +292,16 @@ void setup() {
   cfg.setSoftwareRevision("0.2");
   cfg.setHardwareRevision("1.0");
 
+  // Set the preferred local MTU size BEFORE initializing the gamepad/BLE stack
+  // Valid values are between 23 and 517.
+  NimBLEDevice::setMTU(247);
+
   cfg.setAutoReport(false);
   cfg.setControllerType(CONTROLLER_TYPE_GAMEPAD);
   cfg.setButtonCount(NUM_BUTTONS_TOTAL);
   cfg.setHatSwitchCount(NUM_HATS);
   //cfg.setWhichAxes(false, false, false, false, false, true, false, false); // X, Y, Z, rX, rY, rZ, Slider1, Slider2
+
   bleGamepad.begin(&cfg);
 
   // Setup bleReportTimer 2ms rate
