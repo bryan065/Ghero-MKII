@@ -98,27 +98,29 @@
 #include <Battery18650Stats.h>
 #include "driver/rtc_io.h"
 #include "InterruptButton.h"
-
 #include <NimBLEDevice.h>
 
 // DEBUG
 //#define DEBUG
 
-// 18650 Battery Stuffs
-#define ADC_PIN 3                           // Undefine to disable battery detection/monitoring
+// Battery / power managment stuff
+#define ADC_PIN 3                               // Undefine to disable battery detection/monitoring
 #define ADC_DIVIDER 2500
 #define CHARGING_PIN 10                     
-#define BATTERY_REPORT_INTERVAL (5 * 1000)  // 5 Seconds
-#define BATTERY_TIMEOUT (10 * (60 * 1000))  // 10 Minutes
-#define WAKEUP_PIN GPIO_NUM_2               // Wakeup GPIO ext0, currently same pin as the HOME button
-RTC_DATA_ATTR bool wakeup = false;          // Wakeup tracker
+#define BATTERY_REPORT_INTERVAL (5 * 1000)      // 5 Seconds
+#define BATTERY_TIMEOUT (10 * (60 * 1000))      // 10 Minutes
+#define WAKEUP_PIN GPIO_NUM_2                   // Wakeup GPIO ext0, currently same pin as the HOME button
+#define AGGRESSIVE_POLLING_COOLDOWN (30 * 1000) // 30 seconds
+RTC_DATA_ATTR bool wakeup = false;              // Wakeup tracker
 Battery18650Stats battery(ADC_PIN);
 uint8_t batteryLevel = 0;
 bool    batteryCharging = false;
 bool    batteryState = false;
 bool    keyPressed = false;
+bool    aggressivePolling = false;
 unsigned long lastBatteryCheck = 0;
 unsigned long lastTimeoutCheck = 0;
+unsigned long lastPollingCheck = 0;
 
 // ===================== Configuración =====================
 constexpr uint8_t NUM_BUTTONS_TOTAL = 16;   // límite del HID 
@@ -236,6 +238,9 @@ bool handleBattery();
 void buttonDown(uint8_t i) {
   bleGamepad.press(i);
   keyPressed = true;
+
+  // Enable aggressive polling/BLE spam on any keypress
+  aggressivePolling = true;
 }
 
 void buttonUp(uint8_t i) {
@@ -314,8 +319,11 @@ void setup() {
 void loop() {
   if (!bleGamepad.isConnected()) return;
 
-  // start timer if not running
-  if (bleReportTimer != NULL) if (esp_timer_is_active(bleReportTimer) == 0) esp_timer_start_periodic(bleReportTimer, 2000);
+  // start timer if not running and only if aggresive polling is enabled
+  if (bleReportTimer != NULL) {
+    if ((aggressivePolling) && (esp_timer_is_active(bleReportTimer) == 0)) esp_timer_start_periodic(bleReportTimer, 2000);
+    else if (!aggressivePolling) esp_timer_stop(bleReportTimer);
+  }
 
   unsigned long now = millis();
   bool changed = false;
@@ -336,8 +344,9 @@ void loop() {
 
   changed |= handleWhammy();
 
-  // Reset sleep timeout if any keys pressed
-  if (changed || keyPressed) lastTimeoutCheck = now;
+  // timeout checks
+  if (changed || keyPressed || lastTimeoutCheck == 0) lastTimeoutCheck = now;
+  if (lastPollingCheck == 0) lastPollingCheck == now;
 
 #ifdef ADC_PIN
   changed |= handleBattery();
@@ -353,14 +362,18 @@ void loop() {
   }
 #endif
 
-  // Send report if any changes
-  //if (changed || keyPressed) bleGamepad.sendReport(); keyPressed = false;
+  // Reset aggressive polling after the cooldown period
+  if (lastPollingCheck + AGGRESSIVE_POLLING_COOLDOWN < now) {
+    aggressivePolling = false;
+  }
 
-  // Fall back to sending reports on changes if timer isn't working
+  // Fall back to sending reports on changes if timer is off
   if (bleReportTimer != NULL) if (esp_timer_is_active(bleReportTimer) == 0) if (changed || keyPressed) bleGamepad.sendReport();
 
   // Reset keypressed to false
   if (changed || keyPressed) keyPressed = false;
+
+  vTaskDelay(1 / portTICK_PERIOD_MS); // Prevent CPU starving
 }
 
 // ===================== FUNCTIONS =====================
