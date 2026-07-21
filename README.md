@@ -11,3 +11,8 @@ Libraries required:
 - "ESP32-BLE-Gamepad" by lemmingDev (https://github.com/lemmingDev/ESP32-BLE-Gamepad)
 - "Battery_18650_Stats" by Danilo (https://github.com/danilopinotti/Battery18650Stats)
 - "InterruptButton" by rwmingis (https://github.com/rwmingis/InterruptButton)
+
+## README TO-DO's
+
+- Update with wiring diagram before I forget
+- Update with pin mappings
