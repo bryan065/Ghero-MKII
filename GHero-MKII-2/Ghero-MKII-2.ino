@@ -17,18 +17,27 @@
     # to-do
     __________________________________
       - Wireless Qi receiver
-      - redo calibration button
-        . only have hold 3s to enter calibration mode
+        . Remember the schottky diode!
+
+      - Hall Effect Sensor
+        . Confirm possible mounting solutions to the Neokey PCB.
+          . 49E will be mounted to the underside of the PCB. Unknown if it fits through the center hole.
+        . 400 Gs magnetic switch rating on the to the _top side_ of the PCB may be too far (1.6m PCB + switch housing)
+        . 400 Gs magnetic switch with the step reaching the _bottom_ of the PCB will be perfect without saturating the sensor
+        . 800 Gs magnetic switch (or modified switch) on the _top side_ of the PCB will be okay too but requires specific switches or modding
+
       - RGB strum bar
         . Neopixel functions already finished
         . Waiting on neokey breakout boards
         . Different colors for the up/down strum on profile change
+
       - Waiting for DRV2605 for haptic feedback
         . Need to find a big enough haptic motor to simulate guitar strings being plucked
         . Need to implement dynamic feedback based on how hard/fast the strum is plucked
       - Waiting for 49E analog hall sensors
         . Will be soldered to the neokey breakout board
         . Hall sensor detection already implemented
+
       - Battery charging indicator in Windows
         . Since we can also attach a mouse device to the CompositeHID, we can use that to implement a charging indicator over BLE
         . ESP32-BLE-CompositeHID has not implemented the descriptors necessary for that, need to modify the library to add that function
@@ -126,7 +135,8 @@ void calibrateStrumFull();
 void setAdxl345PowerState(bool enable);
 bool detectHallSensor(uint8_t pin);
 void triggerStrumHaptic();
-void triggerDoubleHapticPulse();
+void playHapticEffect();
+void setHapticRTP();
 uint8_t getBatteryChargeLevel(uint32_t batteryMv);
 
 // -------------------------------------------------------------------
@@ -152,17 +162,12 @@ uint8_t getBatteryChargeLevel(uint32_t batteryMv);
 
 // Default Sensitivity Scale (Percentage of maximum throw delta)
 //   Ultra: 20% of max throw, High: 35%, Med: 50%, Low: 75%
-const float PRESET_SCALES[2][5] = {
-                                    { 0.20f, 0.35f, 0.50f, 0.75f, 1.0f }, // Up strum presets
-                                    { 0.20f, 0.35f, 0.50f, 0.75f, 1.0f }  // Down strum presets
-                                  }; 
-// ---------------------------------
-// Pickup range:
-// 1 = 370
-// 2 = 1240
-// 3 = 2120
-// 4 = 3015
-// 5 = 4095
+
+// Mutable Sensitivity Scale (Index 0 is reserved for Custom Calibration)
+float PRESET_SCALES[2][5] = {
+  { 0.20f, 0.35f, 0.50f, 0.75f, 1.0f }, // Up strum presets
+  { 0.20f, 0.35f, 0.50f, 0.75f, 1.0f }  // Down strum presets
+};
 
 #define BATTERY_REPORT_INTERVAL (30 * 1000) // 30 seconds
 #define SAMPLE_COUNT         10             // Sample count for battery detection
@@ -233,6 +238,20 @@ const uint32_t PRESET_COLORS[5] = {
   0xFFA500  // Preset 4: Orange
 };
 
+// Calibration State Machine Enum
+enum CalibState {
+  CAL_NONE,
+  CAL_ZERO,
+  CAL_FULL_STRUM,
+  CAL_SUCCESS_PULSE,
+  CAL_UP_HOLD,
+  CAL_DOWN_HOLD,
+  CAL_DONE_PULSES
+};
+volatile            CalibState calState = CAL_NONE;   // Current calibration step
+volatile uint32_t   calPhaseStartMs = 0;              // Tracking variable for progressive flashes
+volatile bool       isCalibratingActive = false;
+
 // Preferences Engine
 Preferences prefs;
 
@@ -258,9 +277,6 @@ int                    strumUpZeroOffset = 0;
 int                    strumDownZeroOffset = 0;
 int                    strumUpMaxDelta = 800;   // Saved/Calibrated Max Displacement Default
 int                    strumDownMaxDelta = 800; // Saved/Calibrated Max Displacement Default
-
-// Dynamic indicator flag for RGB Task when user holds to re-calibrate
-volatile bool          isCalibratingActive = false;
 
 // Runtime Hall Sensor Detection
 volatile bool          isHallEffectMode = false;
@@ -431,8 +447,6 @@ void buttonTaskCore1(void *pvParameters) {
             isCalibratingActive = true; 
             calibrateStrumFull(); // Interactive 5-second calibration
             isCalibratingActive = false;
-
-            triggerDoubleHapticPulse(); // Vibration feedback to confirm
           }
         }
       }
@@ -560,13 +574,46 @@ void rgbTaskCore0(void *pvParameters) {
   uint16_t rainbowHue = 0;
 
   for (;;) {
-    // --- Calibration Flash (Highest Priority) ---
-    if (isCalibratingActive) {
-      for (int i = 0; i < NUM_LEDS; i++) {
-        strip.setPixelColor(i, strip.Color(80, 0, 80)); // Magenta
+    // --- Calibration Flash State Machine (Highest Priority) ---
+    if (calState != CAL_NONE) {
+      uint32_t color = strip.Color(0, 0, 0);
+      uint32_t elapsed = millis() - calPhaseStartMs;
+
+      switch (calState) {
+        case CAL_ZERO:
+          color = strip.Color(80, 0, 80); // Solid Magenta
+          break;
+
+        case CAL_FULL_STRUM:
+          // 1Hz blink: 500ms ON, 500ms OFF
+          if ((millis() / 500) % 2 == 0) color = strip.Color(80, 0, 80);
+          break;
+
+        case CAL_UP_HOLD:
+        case CAL_DOWN_HOLD:
+          // Progressive blink: Interval shrinks from 400ms down to 50ms as elapsed approaches 3000ms
+          {
+            uint32_t blinkInterval = map(constrain(elapsed, 0, 3000), 0, 3000, 400, 50);
+            if ((millis() / blinkInterval) % 2 == 0) color = strip.Color(80, 0, 80);
+          }
+          break;
+
+        case CAL_SUCCESS_PULSE:
+          color = strip.Color(0, 80, 0); // Solid Green for successful section
+          break;
+
+        case CAL_DONE_PULSES:
+          // 3 rapid green flashes over 1.5 seconds
+          if ((millis() / 250) % 2 == 0) color = strip.Color(0, 80, 0);
+          break;
+
+        default:
+          break;
       }
+
+      for (int i = 0; i < NUM_LEDS; i++) strip.setPixelColor(i, color);
       strip.show();
-      vTaskDelay(pdMS_TO_TICKS(50));
+      vTaskDelay(pdMS_TO_TICKS(20));
       continue;
     }
 
@@ -878,6 +925,10 @@ void setup() {
   strumUpMaxDelta = prefs.getInt("strumUpMax", 800);
   strumDownMaxDelta = prefs.getInt("strumDownMax", 800);
 
+  // Load custom index 0 multipliers (default to 20% / 0.20f if not found)
+  PRESET_SCALES[0][0] = prefs.getFloat("custUpMult", 0.20f);
+  PRESET_SCALES[1][0] = prefs.getFloat("custDwnMult", 0.20f);
+
   prefs.end(); // Close preference namespace
 
   if (Serial) Serial.printf("[PREFERENCES] Loaded Strum Config: Index %d | MaxDeltas Up:%d, Down:%d\n", currentPresetIndex, strumUpMaxDelta, strumDownMaxDelta);
@@ -1169,55 +1220,146 @@ void calibrateStrumZeroOnly() {
 void calibrateStrumFull() {
   if (!isHallEffectMode) return;
 
-  // Zero-offset resting point (1 second)
-  calibrateStrumZeroOnly();
+  // Double click max power on entry
+  playHapticEffect(10); // Effect 10: Double Click 100%
+
+  // Zero-offset resting point
+  calState = CAL_ZERO;
+  calibrateStrumZeroOnly(); 
 
   // Maximum travel range capture window (5 seconds)
-  uint32_t windowStart = millis();
+  calState = CAL_FULL_STRUM;
+  calPhaseStartMs = millis();
   int maxObservedUpDelta = 0;
   int maxObservedDownDelta = 0;
 
-  while (millis() - windowStart < 5000) {
-    int curUpRaw = sharedStrumUpRaw;
-    int curDownRaw = sharedStrumDownRaw;
-
-    int curUpDelta = abs(curUpRaw - strumUpZeroOffset);
-    int curDownDelta = abs(curDownRaw - strumDownZeroOffset);
+  while (millis() - calPhaseStartMs < 5000) {
+    int curUpDelta = abs(sharedStrumUpRaw - strumUpZeroOffset);
+    int curDownDelta = abs(sharedStrumDownRaw - strumDownZeroOffset);
 
     if (curUpDelta > maxObservedUpDelta)     maxObservedUpDelta = curUpDelta;
     if (curDownDelta > maxObservedDownDelta) maxObservedDownDelta = curDownDelta;
 
-    // Don't sleep
     lastActivityTime = millis();
-
     vTaskDelay(pdMS_TO_TICKS(2));
   }
 
-  // Require a minimum noise-floor delta (200 raw steps) to confirm actual strumming took place
-  bool updated = false;
-  
-  if (maxObservedUpDelta >= 200) {
-    strumUpMaxDelta = maxObservedUpDelta;
-    updated = true;
-  }
-  
-  if (maxObservedDownDelta >= 200) {
-    strumDownMaxDelta = maxObservedDownDelta;
-    updated = true;
+  strumUpMaxDelta = max(maxObservedUpDelta, 200);
+  strumDownMaxDelta = max(maxObservedDownDelta, 200);
+
+  // Double click normal power on section complete
+  playHapticEffect(11); // Effect 11: Double Click 60%
+  calState = CAL_SUCCESS_PULSE;
+  vTaskDelay(pdMS_TO_TICKS(1000));
+
+  // Custom UP Threshold Hold (3 seconds)
+  calState = CAL_UP_HOLD;
+  calPhaseStartMs = millis();
+  uint64_t upHoldSum = 0;
+  uint32_t upHoldSamples = 0;
+  uint32_t lastRtpUpdateMs = 0;
+
+  // Switch haptic motor to Real-Time Playback for continuous rumble
+  if (hapticInitialized) haptic.setMode(DRV2605_MODE_REALTIME);
+
+  while (millis() - calPhaseStartMs < 3000) {
+    uint32_t elapsed = millis() - calPhaseStartMs;
+
+    // Slowly build up vibration intensity every 50ms
+    if (elapsed - lastRtpUpdateMs > 50) {
+      uint8_t intensity = map(constrain(elapsed, 0, 3000), 0, 3000, 15, 127);
+      setHapticRTP(intensity);
+      lastRtpUpdateMs = elapsed;
+    }
+
+    upHoldSum += sharedStrumUpRaw;
+    upHoldSamples++;
+    lastActivityTime = millis();
+    vTaskDelay(pdMS_TO_TICKS(2));
   }
 
-  // Save to persistent storage if valid strumming was performed
-  if (updated) {
-    prefs.begin("ghero", false);
-    prefs.putInt("strumUpMax", strumUpMaxDelta);
-    prefs.putInt("strumDownMax", strumDownMaxDelta);
-    prefs.end();
+  // Turn off RTP rumble and return to internal sequence trigger mode
+  if (hapticInitialized) {
+    setHapticRTP(0);
+    haptic.setMode(DRV2605_MODE_INTTRIG);
+  }
 
-    if (Serial) Serial.printf("[STRUM SYSTEM] New Strum Limits Saved! Up Max: %d | Down Max: %d\n", strumUpMaxDelta, strumDownMaxDelta);
+  // Calculate Up Multiplier
+  float customUpMult = 0.50f;
+  if (upHoldSamples > 0) {
+    int meanUp = upHoldSum / upHoldSamples;
+    int holdDelta = abs(meanUp - strumUpZeroOffset);
+    customUpMult = constrain((float)holdDelta / (float)strumUpMaxDelta, 0.05f, 1.0f);
   }
-  else {
-    if (Serial) Serial.println("[STRUM SYSTEM] No strumming detected during 5s window. Retaining prior thresholds.");
+
+  // Double click normal power on section complete
+  playHapticEffect(11); 
+  calState = CAL_SUCCESS_PULSE;
+  vTaskDelay(pdMS_TO_TICKS(1000));
+
+  // Custom DOWN Threshold Hold (3 seconds)
+  calState = CAL_DOWN_HOLD;
+  calPhaseStartMs = millis();
+  uint64_t downHoldSum = 0;
+  uint32_t downHoldSamples = 0;
+  lastRtpUpdateMs = 0;
+
+  if (hapticInitialized) haptic.setMode(DRV2605_MODE_REALTIME);
+
+  while (millis() - calPhaseStartMs < 3000) {
+    uint32_t elapsed = millis() - calPhaseStartMs;
+
+    if (elapsed - lastRtpUpdateMs > 50) {
+      uint8_t intensity = map(constrain(elapsed, 0, 3000), 0, 3000, 15, 127);
+      setHapticRTP(intensity);
+      lastRtpUpdateMs = elapsed;
+    }
+
+    downHoldSum += sharedStrumDownRaw;
+    downHoldSamples++;
+    lastActivityTime = millis();
+    vTaskDelay(pdMS_TO_TICKS(2));
   }
+
+  if (hapticInitialized) {
+    setHapticRTP(0);
+    haptic.setMode(DRV2605_MODE_INTTRIG);
+  }
+
+  // Calculate Down Multiplier
+  float customDownMult = 0.50f;
+  if (downHoldSamples > 0) {
+    int meanDown = downHoldSum / downHoldSamples;
+    int holdDelta = abs(meanDown - strumDownZeroOffset);
+    customDownMult = constrain((float)holdDelta / (float)strumDownMaxDelta, 0.05f, 1.0f);
+  }
+
+  // Inject to Array and Save to Flash
+  PRESET_SCALES[0][0] = customUpMult;
+  PRESET_SCALES[1][0] = customDownMult;
+
+  prefs.begin("ghero", false);
+  prefs.putInt("strumUpMax", strumUpMaxDelta);
+  prefs.putInt("strumDownMax", strumDownMaxDelta);
+  prefs.putFloat("custUpMult", customUpMult);
+  prefs.putFloat("custDwnMult", customDownMult);
+  prefs.end();
+
+  if (Serial) {
+    Serial.printf("[STRUM SYSTEM] Calibration Complete!\n");
+    Serial.printf("  Up Max: %d | Up Custom Mult: %.2f\n", strumUpMaxDelta, customUpMult);
+    Serial.printf("  Down Max: %d | Down Custom Mult: %.2f\n", strumDownMaxDelta, customDownMult);
+  }
+
+  // Final Sequence -> Sync 3 strong haptic clicks directly with the 3 green LED flashes
+  calState = CAL_DONE_PULSES;
+  
+  for (int i = 0; i < 3; i++) {
+    playHapticEffect(1); // Effect 1: Strong Sharp Click 100%
+    vTaskDelay(pdMS_TO_TICKS(500)); // 500ms perfectly aligns with the NeoPixel (millis() / 250) blink math
+  }
+
+  calState = CAL_NONE; 
 }
 
 // Detects if a Hall Sensor is present
@@ -1268,15 +1410,27 @@ inline void triggerStrumHaptic() {
   }
 }
 
-// Double pulse pattern to confirm calibration finished
+
+// Triggers a specific ROM effect from the DRV2605 library
+// 10 = Double Click 100%, 11 = Double Click 60%, 1 = Strong Click 100%
 // -------------------------------------------------------------------
-void triggerDoubleHapticPulse() {
+void playHapticEffect(uint8_t effect) {
   if (!hapticInitialized) return;
 
   if (xSemaphoreTake(xI2cMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-    haptic.setWaveform(0, 12); // Triple/Double Click sequence
-    haptic.setWaveform(1, 0);
+    haptic.setWaveform(0, effect);
+    haptic.setWaveform(1, 0); // End of sequence marker
     haptic.go();
+    xSemaphoreGive(xI2cMutex);
+  }
+}
+
+// Feeds a direct intensity value (0 to 127) for continuous vibration
+void setHapticRTP(uint8_t intensity) {
+  if (!hapticInitialized) return;
+
+  if (xSemaphoreTake(xI2cMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+    haptic.setRealtimeValue(intensity);
     xSemaphoreGive(xI2cMutex);
   }
 }
