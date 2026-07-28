@@ -125,6 +125,20 @@
 #include <Adafruit_NeoPixel.h>
 
 // -------------------------------------------------------------------
+// STRUCTS & TYPES
+// -------------------------------------------------------------------
+struct BatteryProfile {
+  float voltage;
+  uint8_t percentage;
+};
+
+struct ButtonConfig {
+  uint8_t  pin;
+  uint16_t id;
+  uint32_t debounceUs;
+};
+
+// -------------------------------------------------------------------
 // FUNCTION PROTOTYPES
 // -------------------------------------------------------------------
 void calibrateStrumZeroOnly();
@@ -135,14 +149,13 @@ bool detectHallSensor(uint8_t pin);
 void triggerStrumHaptic();
 void playHapticEffect(uint8_t effect = 1);
 void setHapticRTP(uint8_t intensity = 0);
-
-uint8_t getBatteryChargeLevel(uint32_t batteryMv);
+uint8_t getBatteryChargeLevel(uint32_t batteryMv, const BatteryProfile* curve, size_t numPoints);
 
 // -------------------------------------------------------------------
 // Hardware Definitions
 // -------------------------------------------------------------------
 
-//USER PIN CONFIGURATION - CHANGE ONLY THESE VALUES
+//USER CONFIGURATION - CHANGE ONLY THESE VALUES
 // ---------------------------------
 #define ADC_PIN         3    // ADC pin on the lilygo T-Energy S3
 #define CHARGING_PIN    10   // Wired to the open-drain CHRG pin on the HX charging controller
@@ -160,14 +173,21 @@ uint8_t getBatteryChargeLevel(uint32_t batteryMv);
 
 #define BATTERY_TIMEOUT (10 * (60 * 1000))  // 10 minutes
 
-// Default Sensitivity Scale (Percentage of maximum throw delta)
-//   Ultra: 20% of max throw, High: 35%, Med: 50%, Low: 75%
+// CHOOSE YOUR ACTIVE BATTERY PROFILE HERE
+#define BATTERY_CURVE   lg_hg2
+#define BATTERY_POINTS  (sizeof(BATTERY_CURVE) / sizeof(BATTERY_CURVE[0]))
 
-// Mutable Sensitivity Scale (Index 0 is reserved for Custom Calibration)
+#define HELPER_SLAP     XBOX_BUTTON_SELECT // Pickguard slap defaults to star power
+
+// Hall Effect Strum Sensitivity Presets (Percentage of maximum throw delta)
+//    Note: Index 0 is reserved for Custom Calibration
 float PRESET_SCALES[2][5] = {
   { 0.20f, 0.35f, 0.50f, 0.75f, 1.0f }, // Up strum presets
   { 0.20f, 0.35f, 0.50f, 0.75f, 1.0f }  // Down strum presets
 };
+
+// END OF USER CONFIG
+// ---------------------------------
 
 #define BATTERY_REPORT_INTERVAL (30 * 1000) // 30 seconds
 #define SAMPLE_COUNT         10             // Sample count for battery detection
@@ -185,22 +205,12 @@ float PRESET_SCALES[2][5] = {
 #define HELPER_DPAD_LEFT      0x25
 #define HELPER_DPAD_RIGHT     0x26
 #define HELPER_FUNCTION       0xFFFF
-
-#define HELPER_SLAP           XBOX_BUTTON_SELECT // Pickguard slap defaults to star power
-
-// Change the hall effect strum up/down mapping here
 #define HALL_STRUM_UP         HELPER_DPAD_UP
 #define HALL_STRUM_DOWN       HELPER_DPAD_DOWN
 
-struct ButtonConfig {
-  uint8_t  pin;
-  uint16_t id;
-  uint32_t debounceUs; // Per-button debounce delay in microseconds
-};
-
 // Button Maps
 //   Change your pin and button assignment here
-//
+//    note: Should not be needed with the default xbox mapping in clone hero
 //   { GPIO_PIN, BUTTON_ID, DEBOUNCE_TIME }
 const ButtonConfig BUTTON_MAP[] = {
   { 38,             HELPER_LT,            5000 }, // Green Fret
@@ -227,7 +237,34 @@ constexpr size_t BUTTON_COUNT = sizeof(BUTTON_MAP) / sizeof(BUTTON_MAP[0]);
 // Tracking button states and per-button timing
 bool     lastDebouncedState[BUTTON_COUNT] = { false };
 uint64_t lastStateChangeUs[BUTTON_COUNT] = { 0 };
+
 // -------------------------------------------------------------------
+// 18650 Battery Lookup tables (Must be ordered from highest to lowest voltage)
+//    Note: can add as many points as needed
+// -------------------------------------------------------------------
+
+// Generic 18650 Discharge Curve
+const BatteryProfile generic[] = {
+  {4.20f, 100},
+  {4.10f, 90},
+  {4.00f, 80},
+  {3.90f, 60},
+  {3.80f, 40},
+  {3.70f, 20},
+  {3.60f, 10},
+  {3.30f, 0}
+};
+
+// LG HG2 Discharge Curve
+const BatteryProfile lg_hg2[] = {
+  {4.15f, 100},
+  {4.05f, 95},
+  {3.90f, 80},
+  {3.70f, 40},
+  {3.50f, 15},
+  {3.30f, 5},
+  {3.20f, 0}
+};
 
 // -------------------------------------------------------------------
 // Preset Color Indicators For Activation Windows (Hall effect strum)
@@ -256,6 +293,10 @@ volatile bool       isCalibratingActive = false;
 
 // Preferences Engine
 Preferences prefs;
+
+// BLE rate limiting
+volatile uint32_t      lastBleReportMs = 0;
+const uint32_t         BLE_REPORT_INTERVAL_MS = 7;
 
 // Mutex to safely control BLE transmission across cores
 SemaphoreHandle_t      xBleMutex = NULL;
@@ -490,6 +531,11 @@ void buttonTaskCore1(void *pvParameters) {
 
       // If any button state changed, send the combined report over BLE
       if (stateChanged) {
+        // Enforce a minimum interval between BLE reports to prevent queue saturation
+        while(millis() - lastBleReportMs < BLE_REPORT_INTERVAL_MS) {
+            vTaskDelay(pdMS_TO_TICKS(1)); 
+        }
+
         if (xSemaphoreTake(xBleMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
           gamepad->sendGamepadReport();
           lastActivityTime = millis();
@@ -542,8 +588,9 @@ void hallEffectStrumTaskCore1(void *pvParameters) {
         if (hallEffectStrumTaskHandle != NULL) {
           if (Serial) Serial.println("[STRUM SYSTEM] Hall Effect Strum Task Terminated!");
 
-          vTaskDelete(hallEffectStrumTaskHandle);
-          hallEffectStrumTaskHandle = NULL;
+          TaskHandle_t tempHandle = hallEffectStrumTaskHandle;
+          hallEffectStrumTaskHandle = NULL; 
+          vTaskDelete(tempHandle);
         }
       }
       else {
@@ -590,6 +637,11 @@ void hallEffectStrumTaskCore1(void *pvParameters) {
 
       // If any button state changed, send the combined report over BLE
       if (stateChanged) {
+        // Enforce a minimum interval between BLE reports to prevent queue saturation
+        while(millis() - lastBleReportMs < BLE_REPORT_INTERVAL_MS) {
+            vTaskDelay(pdMS_TO_TICKS(1)); 
+        }
+
         if (xSemaphoreTake(xBleMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
           gamepad->sendGamepadReport();
           lastActivityTime = millis();
@@ -876,7 +928,6 @@ void batteryTaskCore0(void *pvParameters) {
       float variance = 0;
       for (int i = 0; i < SAMPLE_COUNT; i++) {
         variance += pow(samples[i] - mean, 2);
-        vTaskDelay(pdMS_TO_TICKS(1)); // Yield briefly
       }
       float stdDev = sqrt(variance / SAMPLE_COUNT);
 
@@ -885,7 +936,7 @@ void batteryTaskCore0(void *pvParameters) {
 
       uint8_t newLevel = 0;
       if (isBatConnected) {
-        newLevel = getBatteryChargeLevel((uint32_t)mean);
+        newLevel = getBatteryChargeLevel((uint32_t)mean, BATTERY_CURVE, BATTERY_POINTS);
       }
       else {
         if (Serial) Serial.printf("[BATTERY] Battery disconnected or noisy signal! Mean: %.1f mV, StdDev: %.1f\n", mean, stdDev);
@@ -1497,30 +1548,40 @@ void setHapticRTP(uint8_t intensity) {
 
 // Battery level calculation
 // -------------------------------------------------------------------
-uint8_t getBatteryChargeLevel(uint32_t batteryMv) {
-  // Multiply raw pin millivolts by 2 (for 100k/100k voltage divider on T-Energy S3)
+uint8_t getBatteryChargeLevel(uint32_t batteryMv, const BatteryProfile* curve, size_t numPoints) {
+  // Multiply raw pin millivolts by 2 (for 100k/100k voltage divider)
   float volts = ((float)batteryMv * 2.0f) / 1000.0f;
-
-  uint8_t percentage = 0;
-
-  if (volts >= 4.15f) {
-    percentage = 100;
-  } else if (volts <= 3.20f) {
-    percentage = 0;
-  } else if (volts < 3.70f) {
-    // 0% to 10% range (3.2V to 3.7V)
-    percentage = (uint8_t)(((volts - 3.20f) / 0.50f) * 10.0f);
-  } else if (volts <= 4.10f) {
-    // 10% to 90% range (3.7V to 4.1V)
-    percentage = 10 + (uint8_t)(((volts - 3.70f) / 0.40f) * 80.0f);
-  } else {
-    // 90% to 100% range (4.1V to 4.2V)
-    percentage = 90 + (uint8_t)(((volts - 4.10f) / 0.10f) * 10.0f);
+  
+  // Handle Out-of-Bounds (Fully Charged or Completely Dead)
+  if (volts >= curve[0].voltage) {
+    return curve[0].percentage;
+  }
+  if (volts <= curve[numPoints - 1].voltage) {
+    return curve[numPoints - 1].percentage;
   }
 
-  if (Serial) Serial.printf("[BATTERY] Raw Pin: %u mV | Calc Voltage: %.3f V | Percentage: %u%%\n", batteryMv, volts, percentage);
+  // Find the correct bracket and interpolate
+  for (size_t i = 0; i < numPoints - 1; i++) {
+    // Check if the current voltage falls between this point and the next point down
+    if (volts <= curve[i].voltage && volts > curve[i+1].voltage) {
+      
+      // Calculate the total range between the two points
+      float voltageRange = curve[i].voltage - curve[i+1].voltage;
+      float percentRange = curve[i].percentage - curve[i+1].percentage;
+      
+      // Calculate how far along the curve we are from the lower point
+      float voltageOffset = volts - curve[i+1].voltage;
+      
+      // Interpolate the exact percentage
+      uint8_t percentage = curve[i+1].percentage + (uint8_t)((voltageOffset / voltageRange) * percentRange);
+      
+      if (Serial) Serial.printf("[BATTERY] Voltage: %.3f V | Bracket: [%.2f - %.2f] | Percentage: %u%%\n", volts, curve[i].voltage, curve[i+1].voltage, percentage);
+      
+      return percentage;
+    }
+  }
 
-  return percentage;
+  return 0; // Fallback just in case
 }
 
 // Sets ADXL345 to Standby (0x00) or Measurement mode (0x08)
