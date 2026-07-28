@@ -16,9 +16,6 @@
 
     # to-do
     __________________________________
-      - Wireless Qi receiver
-        . Remember the schottky diode!
-
       - Hall Effect Sensor
         . Confirm possible mounting solutions to the Neokey PCB.
           . 49E will be mounted to the underside of the PCB. Unknown if it fits through the center hole.
@@ -71,7 +68,7 @@
                -----------------/ GPIO37 | [ ]               [ ] | GPIO2  / HOME BUTTON / WAKE FROM SLEEP
                           START / GPIO35 | [ ]            TX [ ] | GPIO43 /-----------------
            SELECT / MENU / BACK / GPIO36 | [ ]            RX [ ] | GPIO44 /
-                                / GPIO45 | [ ]               [ ] | GPIO42 /-----------------
+                 PICKGUARD SLAP / GPIO45 | [ ]               [ ] | GPIO42 /-----------------
                                 / GPIO48 | [ ]               [ ] | GND    / GND
                -----------------/ GPIO47 | [ ]               [ ] | GPIO4  / PICKUP
                           RIGHT / GPIO21 | [ ]               [ ] | GPIO5  / NEOPIXEL
@@ -133,10 +130,12 @@
 void calibrateStrumZeroOnly();
 void calibrateStrumFull();
 void setAdxl345PowerState(bool enable);
+void setupAdxl345Tap();
 bool detectHallSensor(uint8_t pin);
 void triggerStrumHaptic();
-void playHapticEffect();
-void setHapticRTP();
+void playHapticEffect(uint8_t effect = 1);
+void setHapticRTP(uint8_t intensity = 0);
+
 uint8_t getBatteryChargeLevel(uint32_t batteryMv);
 
 // -------------------------------------------------------------------
@@ -151,6 +150,7 @@ uint8_t getBatteryChargeLevel(uint32_t batteryMv);
 #define I2C_SCL_PIN     44   // i2c
 #define WHAMMY_ADC_PIN  9    // Whammy ADC pin
 #define PICKUP_ADC_PIN  4    // Pickup ADC pin
+#define TAP_INT_PIN     45   // ADXL345 INT1 pin for pickguard tap
 #define NEOPIXEL_PIN    5    // neopixel pin
 #define NUM_LEDS        3    // Number of neopixels. 1) Power status 2+3) strum backlight
 
@@ -184,7 +184,9 @@ float PRESET_SCALES[2][5] = {
 #define HELPER_DPAD_DOWN      0x24
 #define HELPER_DPAD_LEFT      0x25
 #define HELPER_DPAD_RIGHT     0x26
-#define HELPER_FUNCTION       0xFFF
+#define HELPER_FUNCTION       0xFFFF
+
+#define HELPER_SLAP           XBOX_BUTTON_SELECT // Pickguard slap defaults to star power
 
 // Change the hall effect strum up/down mapping here
 #define HALL_STRUM_UP         HELPER_DPAD_UP
@@ -217,7 +219,7 @@ const ButtonConfig BUTTON_MAP[] = {
 // Don't change the pin definitions below, use the #define above
   { STRUM_UP_PIN,   HELPER_DPAD_UP,       8000 }, // Strum Up Switch
   { STRUM_DOWN_PIN, HELPER_DPAD_DOWN,     8000 }, // Strum Down Switch
-  { WAKEUP_PIN,     XBOX_BUTTON_HOME,     5000 } // Home Button
+  { WAKEUP_PIN,     XBOX_BUTTON_HOME,     5000 }  // Home Button
 };
 
 constexpr size_t BUTTON_COUNT = sizeof(BUTTON_MAP) / sizeof(BUTTON_MAP[0]);
@@ -258,6 +260,7 @@ Preferences prefs;
 // Mutex to safely control BLE transmission across cores
 SemaphoreHandle_t      xBleMutex = NULL;
 SemaphoreHandle_t      xI2cMutex = NULL;
+SemaphoreHandle_t      xTapSemaphore = NULL;
 TaskHandle_t           rgbTaskHandle = NULL;
 TaskHandle_t           hallEffectStrumTaskHandle = NULL;
 
@@ -278,20 +281,14 @@ int                    strumDownZeroOffset = 0;
 int                    strumUpMaxDelta = 800;   // Saved/Calibrated Max Displacement Default
 int                    strumDownMaxDelta = 800; // Saved/Calibrated Max Displacement Default
 
-// Runtime Hall Sensor Detection
+// State trackers
 volatile bool          isHallEffectMode = false;
-
-// Battery Charging Detection
+volatile uint8_t       currentPresetIndex = 0;  // Hall Effect Activation Threshold Index
+volatile uint32_t      presetShowStartMs = 0;   // 1-second LED color feedback tracker
 volatile bool          isCharging = false;
-
-// Lefty / Righty Auto-Detection Flag
 bool                   isLeftHanded = false;
-
-// Hall Effect Activation Threshold Index
-volatile uint8_t       currentPresetIndex = 0;
-
-bool accelInitialized  = false;
-bool hapticInitialized = false;
+bool                   accelInitialized  = false;
+bool                   hapticInitialized = false;
 
 // Whammy Parameters
 constexpr uint32_t WHAMMY_INTERVAL_MS = 20;
@@ -306,9 +303,6 @@ int16_t            lastSentTilt = -32768;
 
 // Deadzone size
 constexpr int      HID_DEADBAND = 400;
-
-// 1-second LED color feedback
-volatile uint32_t  presetShowStartMs = 0;
 
 // -------------------------------------------------------------------
 
@@ -326,6 +320,15 @@ Adafruit_DRV2605 haptic;
 Adafruit_NeoPixel strip(NUM_LEDS, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
 
 // -------------------------------------------------------------------
+// ISR for tap detection
+// -------------------------------------------------------------------
+void IRAM_ATTR adxlTapISR() {
+  BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+  xSemaphoreGiveFromISR(xTapSemaphore, &xHigherPriorityTaskWoken);
+  portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+}
+
+// -------------------------------------------------------------------
 // Handle button ID to gamepad inputs
 // -------------------------------------------------------------------
 inline void updateGamepadButton(uint16_t id, bool isPressed) {
@@ -336,22 +339,55 @@ inline void updateGamepadButton(uint16_t id, bool isPressed) {
     case HELPER_DPAD_DOWN:  gamepad->pressDPadDirectionFlag(isPressed ? SOUTH : NONE); break;
     case HELPER_DPAD_LEFT:  gamepad->pressDPadDirectionFlag(isPressed ? WEST  : NONE); break;
     case HELPER_DPAD_RIGHT: gamepad->pressDPadDirectionFlag(isPressed ? EAST  : NONE); break;
-    case HELPER_FUNCTION:
-//       if (isPressed && isHallEffectMode) {
-//         currentPresetIndex = (currentPresetIndex + 1) % 4;
-//         presetShowStartMs = millis(); // Trigger 1-second RGB indicator!
-
-//         if (Serial) Serial.printf("[STRUM SYSTEM] Switched Strum Preset to Index: %d\n", currentPresetIndex);
-
-//         // Save the new index to Flash
-//         prefs.begin("ghero", false); // Open namespace in Read/Write mode
-//         prefs.putUChar("strumPreset", currentPresetIndex);
-//         prefs.end();
-//       }
-      break;
+    case HELPER_FUNCTION:   break;
     default:
       if (isPressed) {  gamepad->press(id);   }
       else           {  gamepad->release(id); }
+  }
+}
+
+// -------------------------------------------------------------------
+// Core 1 Low Priority Tap Task (Pickguard Slap)
+// -------------------------------------------------------------------
+void tapTaskCore1(void *pvParameters) {
+  for (;;) {
+    // Wait for the ISR to signal a tap event
+    if (xSemaphoreTake(xTapSemaphore, portMAX_DELAY) == pdTRUE) {
+      if (compositeHID.isConnected()) {
+        
+        // Clear interrupt source register on ADXL345 so INT1 drops back HIGH
+        if (xSemaphoreTake(xI2cMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+          Wire.beginTransmission(0x53);
+          Wire.write(0x30); // INT_SOURCE
+          Wire.endTransmission();
+          Wire.requestFrom(0x53, 1);
+
+          if (Wire.available()) Wire.read();
+          xSemaphoreGive(xI2cMutex);
+        }
+
+        // Press HELPER_SLAP (Star Power)
+        if (xSemaphoreTake(xBleMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+          updateGamepadButton(HELPER_SLAP, true);
+          gamepad->sendGamepadReport();
+          lastActivityTime = millis();
+          xSemaphoreGive(xBleMutex);
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(100)); // Active hold duration for tap button press
+
+        // Release HELPER_SLAP
+        if (xSemaphoreTake(xBleMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+          updateGamepadButton(HELPER_SLAP, false);
+          gamepad->sendGamepadReport();
+          xSemaphoreGive(xBleMutex);
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(150)); // Debounce window to prevent double taps
+
+        if (Serial) Serial.println("[PICKGUARD] Pickguard tap detected!");
+      }
+    }
   }
 }
 
@@ -512,8 +548,8 @@ void hallEffectStrumTaskCore1(void *pvParameters) {
       }
       else {
         // Dynamic scaling relative to saved max travel
-        int upThresholdDelta = (int)(strumUpMaxDelta * PRESET_SCALES[1][currentPresetIndex]);
-        int downThresholdDelta = (int)(strumDownMaxDelta * PRESET_SCALES[2][currentPresetIndex]);
+        int upThresholdDelta = (int)(strumUpMaxDelta * PRESET_SCALES[0][currentPresetIndex]);
+        int downThresholdDelta = (int)(strumDownMaxDelta * PRESET_SCALES[1][currentPresetIndex]);
         int hysteresis = 40;
 
         // Calculate absolute deviations relative to resting zero points
@@ -929,7 +965,7 @@ void setup() {
   PRESET_SCALES[0][0] = prefs.getFloat("custUpMult", 0.20f);
   PRESET_SCALES[1][0] = prefs.getFloat("custDwnMult", 0.20f);
 
-  prefs.end(); // Close preference namespace
+  prefs.end();
 
   if (Serial) Serial.printf("[PREFERENCES] Loaded Strum Config: Index %d | MaxDeltas Up:%d, Down:%d\n", currentPresetIndex, strumUpMaxDelta, strumDownMaxDelta);
 
@@ -937,8 +973,9 @@ void setup() {
   pinMode(CHARGING_PIN, INPUT_PULLUP);
 #endif
 
-  xBleMutex = xSemaphoreCreateMutex();  // Create unified Mutex for thread-safe BLE updates
-  xI2cMutex = xSemaphoreCreateMutex();  // Thread-safe i2c operations
+  xBleMutex = xSemaphoreCreateMutex();
+  xI2cMutex = xSemaphoreCreateMutex();
+  xTapSemaphore = xSemaphoreCreateCounting(10, 0);
 
   // Initialize GPIO 43 (SDA) and GPIO 44 (SCL) for ADXL345 Sensor
 #if defined(I2C_SDA_PIN) && defined(I2C_SCL_PIN)
@@ -954,11 +991,14 @@ void setup() {
     Wire.write(0x09); // 50 Hz ODR
     Wire.endTransmission();
 
+    // Enable hardware single-tap detection on Z-axis mapped to INT1
+    setupAdxl345Tap();
+
     accelInitialized = true;
 
     // Detect Handedness on Boot (Resting posture check)
     if (esp_sleep_get_wakeup_cause() != ESP_SLEEP_WAKEUP_EXT0) {
-      delay(250); // Short settle delay
+      delay(250);
       sensors_event_t event;
       accel.getEvent(&event);
 
@@ -1015,6 +1055,12 @@ void setup() {
   pinMode(WHAMMY_ADC_PIN, INPUT);
   pinMode(PICKUP_ADC_PIN, INPUT);
 
+  // Setup Pickguard Tap Interrupt
+  if (accelInitialized) {
+    pinMode(TAP_INT_PIN, INPUT_PULLUP);
+    attachInterrupt(digitalPinToInterrupt(TAP_INT_PIN), adxlTapISR, FALLING);
+  }
+
   if (isHallEffectMode) {
     pinMode(STRUM_UP_PIN, INPUT);
     pinMode(STRUM_DOWN_PIN, INPUT);
@@ -1063,6 +1109,20 @@ void setup() {
       1
     );
   }
+
+  // Tap Detection Task (Priority 1)
+  if (accelInitialized) {
+    xTaskCreatePinnedToCore(
+      tapTaskCore1,
+      "TapTaskCore1",
+      3072,
+      NULL,
+      1,
+      NULL,
+      1
+    );
+  }
+  
 
   // --- CORE 0 TASKS ---
   // Battery Monitor Task (Priority 1)
@@ -1471,5 +1531,34 @@ void setAdxl345PowerState(bool enable) {
   Wire.beginTransmission(0x53); // Default ADXL345 I2C address
   Wire.write(0x2D);            // POWER_CTL register
   Wire.write(enable ? 0x08 : 0x00); // 0x08 = Measure, 0x00 = Standby
+  Wire.endTransmission();
+}
+
+// Setup ADXL345 Tap Feature
+// -------------------------------------------------------------------
+void setupAdxl345Tap() {
+  Wire.beginTransmission(0x53);
+  Wire.write(0x1D); // THRESH_TAP (62.5mg / LSB) -> 0x30 = ~3.0g force
+  Wire.write(0x30);
+  Wire.endTransmission();
+
+  Wire.beginTransmission(0x53);
+  Wire.write(0x21); // DUR (625us / LSB) -> 0x10 = ~10ms duration
+  Wire.write(0x10);
+  Wire.endTransmission();
+
+  Wire.beginTransmission(0x53);
+  Wire.write(0x2A); // TAP_AXES (Enable Z axis tap detection)
+  Wire.write(0x01); // Bit 0 = Z axis
+  Wire.endTransmission();
+
+  Wire.beginTransmission(0x53);
+  Wire.write(0x2F); // INT_MAP (0 = INT1, 1 = INT2)
+  Wire.write(0x00); // Route SINGLE_TAP interrupt to INT1
+  Wire.endTransmission();
+
+  Wire.beginTransmission(0x53);
+  Wire.write(0x2E); // INT_ENABLE
+  Wire.write(0x40); // Enable SINGLE_TAP interrupt (Bit 6)
   Wire.endTransmission();
 }
