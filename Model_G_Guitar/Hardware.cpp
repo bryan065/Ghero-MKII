@@ -25,6 +25,8 @@ void updateGamepadButton(uint16_t id, bool isPressed) {
 void calibrateStrumZeroOnly() {
   if (!isHallEffectMode) return;
 
+  if (Serial) Serial.println("[STRUM SYSTEM] Calibrating Zero...");
+
   uint32_t calibrationStartTime = millis();
   uint64_t sumUp = 0;
   uint64_t sumDown = 0;
@@ -59,6 +61,9 @@ void calibrateStrumFull() {
   calibrateStrumZeroOnly(); 
 
   // Maximum travel range capture window (5 seconds)
+  if (Serial) Serial.println("[STRUM SYSTEM] Calibrating Maximum range...");
+  if (Serial) Serial.println("[STRUM SYSTEM] Move the strum bar up/down for the next 5 seconds...");
+
   calState = CAL_FULL_STRUM;
   calPhaseStartMs = millis();
   int maxObservedUpDelta = 0;
@@ -84,6 +89,9 @@ void calibrateStrumFull() {
   vTaskDelay(pdMS_TO_TICKS(1000));
 
   // Custom UP Threshold Hold (3 seconds)
+  if (Serial) Serial.println("[STRUM SYSTEM] Calibrating custom up threshold...");
+  if (Serial) Serial.println("[STRUM SYSTEM] Hold the strum in the up position");
+
   calState = CAL_UP_HOLD;
   calPhaseStartMs = millis();
   uint64_t upHoldSum = 0;
@@ -129,6 +137,9 @@ void calibrateStrumFull() {
   vTaskDelay(pdMS_TO_TICKS(1000));
 
   // Custom DOWN Threshold Hold (3 seconds)
+  if (Serial) Serial.println("[STRUM SYSTEM] Calibrating custom down threshold...");
+  if (Serial) Serial.println("[STRUM SYSTEM] Hold the strum in the down position");
+
   calState = CAL_DOWN_HOLD;
   calPhaseStartMs = millis();
   uint64_t downHoldSum = 0;
