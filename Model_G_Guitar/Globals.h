@@ -15,10 +15,10 @@
 #define DRV2605_MODE_STANDBY    0x40
 
 // Pickguard Tap Sensivity options
-#define TAP_LOW                 0x40  // ~4.0g force (least sensitive, highest force required)
-#define TAP_MED                 0x30  // ~3.0g force (medium sensitivity)
-#define TAP_HIGH                0x20  // ~2.0g force (high sensitivity)
-#define TAP_ULTRA               0x15  // ~1.5g force (ultra sensitive)
+#define TAP_LOW                 0x50  // ~5.0g force (least sensitive, highest force required)
+#define TAP_MED                 0x40  // ~4.0g force (medium sensitivity)
+#define TAP_HIGH                0x30  // ~3.0g force (high sensitivity)
+#define TAP_ULTRA               0x20  // ~2.0g force (ultra sensitive)
 
 // Structs & Enums
 struct BatteryProfile {

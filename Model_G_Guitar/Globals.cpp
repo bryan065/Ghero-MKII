@@ -1,8 +1,8 @@
 #include "Globals.h"
 
 float PRESET_SCALES[2][5] = {
-  { 0.20f, 0.35f, 0.50f, 0.75f, 1.0f },
-  { 0.20f, 0.35f, 0.50f, 0.75f, 1.0f }
+  { 0.20f, 0.15f, 0.40f, 0.60f, 0.9f },
+  { 0.20f, 0.15f, 0.40f, 0.60f, 0.9f }
 };
 
 const uint32_t PRESET_COLORS[5] = {
