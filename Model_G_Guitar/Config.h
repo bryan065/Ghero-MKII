@@ -5,6 +5,8 @@
 
 // DISABLE DEBUG FLAG BEFORE FINAL PRODUCTION USE
 #define DEBUG
+//#define DEBUG_HALL
+
 
 // ===================================================================
 // Settings
@@ -13,6 +15,7 @@
 #define BATTERY_TIMEOUT   (10 * (60 * 1000))
 #define HELPER_SLAP       XBOX_BUTTON_SELECT
 #define BATTERY_CURVE     lg_hg2              // Battery Selection (generic, lg_hg2)
+#define RAKE
 
 // ===================================================================
 // Hardware / ADC Pins
