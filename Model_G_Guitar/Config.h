@@ -3,10 +3,11 @@
 #include <XboxGamepadDevice.h>
 #include "ButtonTypes.h"
 
+#define VERSION         "1.0.0"
+
 // DISABLE DEBUG FLAG BEFORE FINAL PRODUCTION USE
 #define DEBUG
 //#define DEBUG_HALL
-
 
 // ===================================================================
 // Settings
