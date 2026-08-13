@@ -182,9 +182,35 @@ void buttonTaskCore1(void *pvParameters) {
 // Hall Effect Strum Task (Core 1, Priority 5)
 // -------------------------------------------------------------------
 void hallEffectStrumTaskCore1(void *pvParameters) {
+  // Too jittery? Increase CONFIRM_SAMPLES to 4 or 5 (adds ~4-5ms latency to initial trigger)
+  // Too sluggish? Reduce EMA factor: change (filtered * 3 + raw) >> 2 to (filtered * 2 + raw * 2) >> 2 for less filtering
+  // Hysteresis too aggressive? Lower 0.15f to 0.10f
+  static int EMA_FACTOR = 3;
+  static float HYSTERESIS = 0.15f;
+
   // Variables for hall effect strum actuation
   static bool hallStrumUpState = false;
   static bool hallStrumDownState = false;
+
+  // EMA filtering for noise reduction (smooth but responsive)
+  static int filteredUpRaw = -1;
+  static int filteredDownRaw = -1;
+
+  // Consecutive confirmation counters to prevent jitter triggers near threshold
+  static int upConfirmCount = 0;
+  static int downConfirmCount = 0;
+  const int CONFIRM_SAMPLES = 3; // Require N consecutive samples past threshold before triggering
+
+  // Debug tracking variables with EMA smoothing
+#ifdef DEBUG
+    static float emaUpRaw = 0.0f;
+    static float emaDownRaw = 0.0f;
+    static float emaUpDelta = 0.0f;
+    static float emaDownDelta = 0.0f;
+    static bool emaInitialized = false;
+    const float EMA_ALPHA = 0.2f;  // Smoothing factor: 0.1 = heavy smoothing, 0.5 = light smoothing
+    const int DEBUG_CHANGE_THRESHOLD = 50;  // Increased threshold since values are now smoothed
+#endif
 
   for (;;) {
     // Skip processing if currently running active calibration
@@ -226,20 +252,78 @@ void hallEffectStrumTaskCore1(void *pvParameters) {
         // Dynamic scaling relative to saved max travel
         int upThresholdDelta = (int)(strumUpMaxDelta * PRESET_SCALES[0][currentPresetIndex]);
         int downThresholdDelta = (int)(strumDownMaxDelta * PRESET_SCALES[1][currentPresetIndex]);
-        int hysteresis = 40;
+        
+        // PROPORTIONAL HYSTERESIS: Scale with threshold instead of fixed value
+        // Gives more noise margin when trigger point is deeper
+        int upHysteresis = max(40, (int)(upThresholdDelta * HYSTERESIS));
+        int downHysteresis = max(40, (int)(downThresholdDelta * HYSTERESIS));
+
+        // EMA filtering to reduce ADC noise
+        if (filteredUpRaw < 0) filteredUpRaw = upRaw;
+        if (filteredDownRaw < 0) filteredDownRaw = downRaw;
+        filteredUpRaw = (filteredUpRaw * EMA_FACTOR + upRaw) >> 2;
+        filteredDownRaw = (filteredDownRaw * EMA_FACTOR + downRaw) >> 2;
 
         // Calculate absolute deviations relative to resting zero points
-        int upDelta = abs(upRaw - strumUpZeroOffset);
-        int downDelta = abs(downRaw - strumDownZeroOffset);
+        int upDelta = abs(filteredUpRaw - strumUpZeroOffset);
+        int downDelta = abs(filteredDownRaw - strumDownZeroOffset);
 
-        // Evaluate logic with hysteresis
-        bool newStrumUp = hallStrumUpState ? (upDelta > (upThresholdDelta - hysteresis)) 
-                                          : (upDelta > upThresholdDelta);
+        // ===== DEBUG OUTPUT =====
+#ifdef DEBUG_HALL
+        // Initialize EMA on first read to avoid ramp-up from zero
+        if (!emaInitialized) {
+          emaUpRaw = upRaw;
+          emaDownRaw = downRaw;
+          emaUpDelta = upDelta;
+          emaDownDelta = downDelta;
+          emaInitialized = true;
+        }
 
-        bool newStrumDown = hallStrumDownState ? (downDelta > (downThresholdDelta - hysteresis)) 
-                                              : (downDelta > downThresholdDelta);
+        // Apply Exponential Moving Average
+        emaUpRaw = (emaUpRaw * (1.0f - EMA_ALPHA)) + (upRaw * EMA_ALPHA);
+        emaDownRaw = (emaDownRaw * (1.0f - EMA_ALPHA)) + (downRaw * EMA_ALPHA);
+        emaUpDelta = (emaUpDelta * (1.0f - EMA_ALPHA)) + (upDelta * EMA_ALPHA);
+        emaDownDelta = (emaDownDelta * (1.0f - EMA_ALPHA)) + (downDelta * EMA_ALPHA);
 
-        if (newStrumUp != hallStrumUpState) {
+        // Only print when smoothed values change noticeably
+        if (Serial && (abs(emaUpRaw - upRaw) > DEBUG_CHANGE_THRESHOLD || 
+                        abs(emaDownRaw - downRaw) > DEBUG_CHANGE_THRESHOLD ||
+                        abs(emaUpDelta - upDelta) > DEBUG_CHANGE_THRESHOLD ||
+                        abs(emaDownDelta - downDelta) > DEBUG_CHANGE_THRESHOLD)) {
+          Serial.printf("[STRUM DEBUG] UP: raw=%.0f, delta=%.0f, thresh=%d, state=%s | "
+                        "DN: raw=%.0f, delta=%.0f, thresh=%d, state=%s\n",
+                        emaUpRaw, emaUpDelta, upThresholdDelta, hallStrumUpState ? "PRESSED" : "released",
+                        emaDownRaw, emaDownDelta, downThresholdDelta, hallStrumDownState ? "PRESSED" : "released");
+        }
+#endif
+                // ===== END DEBUG OUTPUT =====
+
+        // UP STRUM: Consecutive confirmation for initial trigger, hysteresis for release
+        if (upDelta > upThresholdDelta) {
+          upConfirmCount++;
+        } else if (upDelta > (upThresholdDelta - upHysteresis)) {
+          // Within hysteresis band - keep current confirmation or set to 1 if already pressed
+          upConfirmCount = max(1, upConfirmCount);
+        } else {
+          upConfirmCount = 0;
+        }
+
+        // DOWN STRUM
+        if (downDelta > downThresholdDelta) {
+          downConfirmCount++;
+        } else if (downDelta > (downThresholdDelta - downHysteresis)) {
+          downConfirmCount = max(1, downConfirmCount);
+        } else {
+          downConfirmCount = 0;
+        }
+
+        // State transitions: need CONFIRM_SAMPLES to arm, hysteresis to disarm
+        bool newStrumUp = (upConfirmCount >= CONFIRM_SAMPLES) ? true
+                      : (hallStrumUpState && (upDelta > (upThresholdDelta - upHysteresis)));
+        bool newStrumDown = (downConfirmCount >= CONFIRM_SAMPLES) ? true
+                        : (hallStrumDownState && (downDelta > (downThresholdDelta - downHysteresis)));
+
+      if (newStrumUp != hallStrumUpState) {
           hallStrumUpState = newStrumUp;
           if (xSemaphoreTake(xBleMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
             updateGamepadButton(HALL_STRUM_UP, hallStrumUpState);
@@ -290,7 +374,7 @@ void hallEffectStrumTaskCore1(void *pvParameters) {
 void rgbTaskCore0(void *pvParameters) {
   uint16_t rainbowHue = 0;
   strip.begin();
-  strip.setBrightness(40);
+  //strip.setBrightness(128);
 
   for (;;) {
     // --- Calibration Flash State Machine (Highest Priority) ---
@@ -300,30 +384,37 @@ void rgbTaskCore0(void *pvParameters) {
 
       switch (calState) {
         case CAL_ZERO:
-          color = strip.Color(80, 0, 80); // Solid Magenta
+          color = strip.Color(255, 0, 255); // Solid Magenta
           break;
 
         case CAL_FULL_STRUM:
           // 1Hz blink: 500ms ON, 500ms OFF
-          if ((millis() / 500) % 2 == 0) color = strip.Color(80, 0, 80);
+          if ((millis() / 500) % 2 == 0) color = strip.Color(255, 0, 255);
           break;
 
         case CAL_UP_HOLD:
+          // Progressive blink: Interval shrinks from 400ms down to 50ms as elapsed approaches 3000ms
+          {
+            uint32_t blinkInterval = map(constrain(elapsed, 0, 3000), 0, 3000, 400, 50);
+            if ((millis() / blinkInterval) % 5 == 0) color = strip.Color(180, 0, 180);
+          }
+          break;
+
         case CAL_DOWN_HOLD:
           // Progressive blink: Interval shrinks from 400ms down to 50ms as elapsed approaches 3000ms
           {
             uint32_t blinkInterval = map(constrain(elapsed, 0, 3000), 0, 3000, 400, 50);
-            if ((millis() / blinkInterval) % 2 == 0) color = strip.Color(80, 0, 80);
+            if ((millis() / blinkInterval) % 5 == 0) color = strip.Color(180, 0, 180);
           }
           break;
 
         case CAL_SUCCESS_PULSE:
-          color = strip.Color(0, 80, 0); // Solid Green for successful section
+          color = strip.Color(0, 180, 0); // Solid Green for successful section
           break;
 
         case CAL_DONE_PULSES:
           // 3 rapid green flashes over 1.5 seconds
-          if ((millis() / 250) % 2 == 0) color = strip.Color(0, 80, 0);
+          if ((millis() / 250) % 2 == 0) color = strip.Color(0, 255, 0);
           break;
 
         default:
@@ -513,7 +604,7 @@ void whammyTaskCore0(void *pvParameters) {
             currentPresetIndex = newPresetIndex;
 
             // Trigger the 1-second RGB indicator
-            presetShowStartMs = millis();
+            //presetShowStartMs = millis();
 
             if (Serial) Serial.printf("[STRUM SYSTEM] Pickup switched to Strum Preset Index: %d\n", currentPresetIndex);
 

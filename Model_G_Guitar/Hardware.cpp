@@ -58,7 +58,8 @@ void calibrateStrumFull() {
 
   // Zero-offset resting point
   calState = CAL_ZERO;
-  calibrateStrumZeroOnly(); 
+  calibrateStrumZeroOnly();
+  delay(3000);
 
   // Maximum travel range capture window (5 seconds)
   if (Serial) Serial.println("[STRUM SYSTEM] Calibrating Maximum range...");
@@ -69,7 +70,7 @@ void calibrateStrumFull() {
   int maxObservedUpDelta = 0;
   int maxObservedDownDelta = 0;
 
-  while (millis() - calPhaseStartMs < 5000) {
+  while (millis() - calPhaseStartMs < 15000) {
     int curUpDelta = abs(sharedStrumUpRaw - strumUpZeroOffset);
     int curDownDelta = abs(sharedStrumDownRaw - strumDownZeroOffset);
 
@@ -86,7 +87,8 @@ void calibrateStrumFull() {
   // Double click normal power on section complete
   playHapticEffect(11); // Effect 11: Double Click 60%
   calState = CAL_SUCCESS_PULSE;
-  vTaskDelay(pdMS_TO_TICKS(1000));
+  //vTaskDelay(pdMS_TO_TICKS(1000));
+  delay(5000);
 
   // Custom UP Threshold Hold (3 seconds)
   if (Serial) Serial.println("[STRUM SYSTEM] Calibrating custom up threshold...");
@@ -134,7 +136,8 @@ void calibrateStrumFull() {
   // Double click normal power on section complete
   playHapticEffect(11); 
   calState = CAL_SUCCESS_PULSE;
-  vTaskDelay(pdMS_TO_TICKS(1000));
+  //vTaskDelay(pdMS_TO_TICKS(1000));
+  delay(3000);
 
   // Custom DOWN Threshold Hold (3 seconds)
   if (Serial) Serial.println("[STRUM SYSTEM] Calibrating custom down threshold...");
@@ -186,6 +189,12 @@ void calibrateStrumFull() {
   prefs.putFloat("custUpMult", customUpMult);
   prefs.putFloat("custDwnMult", customDownMult);
   prefs.end();
+
+  // Double click normal power on section complete
+  playHapticEffect(11); 
+  calState = CAL_SUCCESS_PULSE;
+  //vTaskDelay(pdMS_TO_TICKS(1000));
+  delay(3000);
 
   if (Serial) {
     Serial.printf("[STRUM SYSTEM] Calibration Complete!\n");
@@ -247,6 +256,8 @@ void triggerStrumHaptic() {
 
   if (xSemaphoreTake(xI2cMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
     // Re-arm slot 0 to guarantee continuous re-triggering during fast strumming
+    //haptic.setWaveform(0, 17); // Strong click
+    //haptic.setWaveform(0, 47); // Strong longer buzz
     haptic.setWaveform(0, 1); 
     haptic.setWaveform(1, 0);
 
@@ -366,4 +377,146 @@ void setupAdxl345Tap(uint8_t tapThreshold) {
   Wire.endTransmission();
   Wire.requestFrom(0x53, 1);
   if (Wire.available()) Wire.read();
+}
+
+// -------------------------------------------------------------------
+// Generate a unique firmware signature using compile time
+// -------------------------------------------------------------------
+String getFirmwareSignature() {
+    // Combines version + date + time
+    // Changes with every compile, even if FIRMWARE_VERSION doesn't change
+    return String(VERSION) + "_" + 
+           __DATE__ + "_" + 
+           __TIME__;
+}
+
+// -------------------------------------------------------------------
+// Determine if DRV2605 calibration is needed
+// -------------------------------------------------------------------
+bool checkDRV2605Calibration() {
+    prefs.begin("ghero", false);
+    
+    // Check firmware signature
+    String storedSig = prefs.getString("fw_sig", "");
+    String currentSig = getFirmwareSignature();
+    
+    // Run calibration if new firmware or first ever boot -> run calibration
+    if (storedSig != currentSig) {
+      if (Serial) Serial.println("[DRV2605] New firmware detected or first boot - calibrating");
+      if (Serial) Serial.println("[DRV2605] Current signature: " + currentSig);
+      prefs.putString("fw_sig", currentSig);
+      prefs.end();
+      return true;
+    }
+
+    // Check if calibration data exists, if not -> run calibration
+    if (!prefs.isKey("drv2605_cal")) {
+      if (Serial) Serial.println("[DRV2605] No calibration data found - calibrating");
+      prefs.end();
+      return true;
+    }
+
+    prefs.end();
+    return false;
+}
+
+// -------------------------------------------------------------------
+// Load calibration data and apply to DRV2605 registers
+// -------------------------------------------------------------------
+bool loadDRV2605Calibration() {
+    prefs.begin("ghero", false);
+    
+    if (!prefs.isKey("drv2605_cal")) {
+      if (Serial) Serial.println("[DRV2605] No calibration data found");
+      prefs.end();
+      return false;
+    }
+    
+    prefs.getBytes("drv2605_cal", drv2605CalibrationData, 3);
+    prefs.end();
+    
+    // Apply calibration registers
+    haptic.writeRegister8(DRV2605_REG_AUTOCALCOMP, drv2605CalibrationData[0]);
+    haptic.writeRegister8(DRV2605_REG_AUTOCALEMP, drv2605CalibrationData[1]);
+
+    // Apply ONLY the BEMF_GAIN bits (bits 1:0) in 0x1A (DRV2605_REG_FEEDBACK)
+    uint8_t currentFeedback = haptic.readRegister8(DRV2605_REG_FEEDBACK);
+    uint8_t restoredFeedback = (currentFeedback & 0xFC) | (drv2605CalibrationData[2] & 0x03);
+    haptic.writeRegister8(DRV2605_REG_FEEDBACK, restoredFeedback);
+    
+    if (Serial) {
+        Serial.println("[DRV2605] Calibration loaded:");
+        Serial.printf("[DRV2605]   CAL1: 0x%02X, CAL2: 0x%02X, CAL3: 0x%02X\n",
+                      drv2605CalibrationData[0],
+                      drv2605CalibrationData[1],
+                      drv2605CalibrationData[2]);
+    }
+    return true;
+}
+
+// -------------------------------------------------------------------
+// Save calibration data from DRV2605 registers
+// -------------------------------------------------------------------
+void saveDRV2605Calibration() {
+    // Read calibration registers
+    drv2605CalibrationData[0] = haptic.readRegister8(DRV2605_REG_AUTOCALCOMP);
+    drv2605CalibrationData[1] = haptic.readRegister8(DRV2605_REG_AUTOCALEMP);
+    drv2605CalibrationData[2] = haptic.readRegister8(DRV2605_REG_FEEDBACK);
+    
+    prefs.begin("ghero", false);
+    prefs.putBytes("drv2605_cal", drv2605CalibrationData, 3);
+    prefs.end();
+    
+    if (Serial) {
+        Serial.println("[DRV2605] Calibration saved:");
+        Serial.printf("[DRV2605]   CAL1: 0x%02X, CAL2: 0x%02X, CAL3: 0x%02X\n",
+                      drv2605CalibrationData[0],
+                      drv2605CalibrationData[1],
+                      drv2605CalibrationData[2]);
+    }
+}
+
+// -------------------------------------------------------------------
+// Initialize DRV2605 with smart calibration
+// -------------------------------------------------------------------
+void initHapticDriver() {
+  if (haptic.begin(&Wire)) {
+    haptic.useLRA();
+    haptic.selectLibrary(6); // Library 6 = LRA Mode
+
+    // Set 1.2V RMS Rated Voltage (Raw Value: 58 / 0x3A)
+    haptic.writeRegister8(DRV2605_REG_RATEDV, 58);
+
+    // Set 1.7V Peak Overdrive Clamp Voltage (Raw Value: 80 / 0x50)
+    haptic.writeRegister8(DRV2605_REG_CLAMPV, 80);
+
+    // Smart calibration
+    if (checkDRV2605Calibration()) {
+        // Run full calibration
+        haptic.setMode(DRV2605_MODE_AUTOCAL);
+        
+        while (haptic.readRegister8(DRV2605_REG_GO) & 0x01) {    // Wait until calibration is complete (GO bit self-clears)
+          delay(10);
+        }
+
+        haptic.setMode(DRV2605_MODE_INTTRIG);
+
+        // Check bit 3 (DIAG_RESULT) in Register 0x00 -> 0 = Auto-calibration passed, 1 = Auto-calibration failed
+        uint8_t status = haptic.readRegister8(0x00);
+
+        if ((status & 0x08) == 0) {
+            saveDRV2605Calibration();
+        } else {
+            Serial.println("[DRV2605] ERROR: Auto-calibration failed! Calibration not saved.");
+        }
+    } else {
+        // Skip calibration, use stored data
+        loadDRV2605Calibration();
+    }
+
+    hapticInitialized = true;
+  }
+  else {
+    if (Serial) Serial.println("[MODULES] DRV2605L non-functional or disconnected.");
+  }
 }

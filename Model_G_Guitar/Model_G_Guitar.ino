@@ -97,20 +97,7 @@ void setup() {
   }
 
   // DRV2605L Setup
-  if (haptic.begin(&Wire)) {
-    haptic.setMode(DRV2605_MODE_INTTRIG); // Internal I2C Trigger Mode
-    haptic.selectLibrary(6); // Library 6 = LRA Mode
-    
-    // Select the haptic effect:
-    // Effect #1 = Strong Click (100%), #2 = Sharp Click (80%), #12 = Triple Click
-    //haptic.setWaveform(0, 1); // Slot 0 = Sharp Click effect
-    //haptic.setWaveform(1, 0); // Slot 1 = End of sequence marker
-
-    hapticInitialized = true;
-  }
-  else {
-    if (Serial) Serial.println("[MODULES] DRV2605L non-functional or disconnected.");
-  }
+  initHapticDriver();
 #endif
 
   // ADC Attenuation Setup
@@ -141,10 +128,12 @@ void setup() {
   if (Serial) Serial.printf("[STRUM SYSTEM] Strum Hardware: %s\n", isHallEffectMode ? "HALL EFFECT" : "MECHANICAL SWITCH");
 
   // Setup Pickguard Tap Interrupt
+  #ifdef TAP_INT_PIN
   if (accelInitialized) {
     pinMode(TAP_INT_PIN, INPUT_PULLDOWN);
     attachInterrupt(digitalPinToInterrupt(TAP_INT_PIN), adxlTapISR, RISING);
   }
+  #endif
 
   if (isHallEffectMode) {
     pinMode(STRUM_UP_PIN, INPUT);
@@ -193,6 +182,7 @@ void setup() {
   XboxSeriesXControllerDeviceConfiguration* config = new XboxSeriesXControllerDeviceConfiguration();
   BLEHostConfiguration hostConfig = config->getIdealHostConfiguration();
   hostConfig.setHidType(HID_GAMEPAD);
+  hostConfig.setSoftwareRevision(VERSION);
   gamepad = new XboxGamepadDevice(config);
 
   compositeHID.addDevice(gamepad);

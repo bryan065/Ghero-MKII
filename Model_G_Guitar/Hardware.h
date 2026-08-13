@@ -3,8 +3,8 @@
 #include "Config.h"
 #include "Globals.h"
 
-void calibrateStrumZeroOnly();
-void calibrateStrumFull();
+void calibrateStrumZeroOnly(void);
+void calibrateStrumFull(void);
 void setAdxl345PowerState(bool enable);
 void setupAdxl345Tap(uint8_t tapThreshold);
 bool detectHallSensor(uint8_t pin);
@@ -12,6 +12,11 @@ void triggerStrumHaptic();
 void playHapticEffect(uint8_t effect = 1);
 void setHapticRTP(uint8_t intensity = 0);
 void updateGamepadButton(uint16_t id, bool isPressed);
+bool checkDV2605Calibration(void);
+bool loadDRV2605Calibration(void);
+void saveDRV2605Calibration(void);
+void initHapticDriver(void);
+String  getFirmwareSignature(void);
 uint8_t getBatteryChargeLevel(uint32_t batteryMv, const BatteryProfile* curve, size_t numPoints);
 
 template <size_t N>

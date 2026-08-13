@@ -10,7 +10,7 @@
 #include <Wire.h>
 
 // Fixed Configuration Options
-#define BATTERY_REPORT_INTERVAL (30 * 1000)
+#define BATTERY_REPORT_INTERVAL (30 * 1000) // 30 Seconds
 #define SAMPLE_COUNT            10
 #define DRV2605_MODE_STANDBY    0x40
 
@@ -100,3 +100,6 @@ extern bool                hapticInitialized;
 extern int                 rawEma;
 extern int16_t             lastSentWhammy;
 extern int16_t             lastSentTilt;
+
+// DRV2605 calibration data
+extern uint8_t drv2605CalibrationData[3];

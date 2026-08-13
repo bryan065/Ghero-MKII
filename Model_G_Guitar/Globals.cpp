@@ -23,7 +23,7 @@ Adafruit_ADXL345_Unified accel = Adafruit_ADXL345_Unified(12345);
 Adafruit_DRV2605 haptic;
 
 #ifdef NEOPIXEL_PIN
-  Adafruit_NeoPixel strip = Adafruit_NeoPixel(NUM_LEDS, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
+  Adafruit_NeoPixel strip = Adafruit_NeoPixel(NUM_LEDS, NEOPIXEL_PIN, NEO_GRB);
 #endif
 
 // Global State Initializations
@@ -58,3 +58,6 @@ bool                hapticInitialized = false;
 int                 rawEma = -1;
 int16_t             lastSentWhammy = -32768;
 int16_t             lastSentTilt = -32768;
+
+// DRV2605 calibration data
+uint8_t             drv2605CalibrationData[3];
