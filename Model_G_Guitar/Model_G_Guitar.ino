@@ -1,3 +1,112 @@
+/* -------------------------------------------------------------------------------------------------------------------------------
+  ESP32 BLE Gamepad GUITAR Rockband Stratocaster (wii edition)
+    
+    # BUTTON SUMMARY
+    __________________________________
+    5 frets + solo frets (5 gpio) / No solo modifiers
+    2 strum + hall effect sensors (same pin) -> 49E sensors
+    4 dpad
+    2 start+select
+    1 home
+    1 function button
+    1 whammy ADC
+    1 pickup ADC
+    1 ADXL345 i2c -> i2c
+    1 DRV2605 i2c (haptic motor) - > i2c
+    3 Neopixels
+
+    # to-do
+    __________________________________
+      - feat: Battery charging indicator in Windows
+        . Since we can also attach a mouse device to the CompositeHID, we can use that to implement a charging indicator over BLE
+        . ESP32-BLE-CompositeHID has not implemented the descriptors necessary for that, need to modify the library to add that function
+        . Worth it?
+      - feat: Haptics - > dual motors
+        . Explore different haptic controller + higher voltage motor for main body
+        . DRV2605 for guitar neck
+        - ESP32-S3 has two i2c buses. We can use a different bus for the secondary DRV2605
+      - feat: Add a "rake" strum mode - > 1/1 or 2/2 strum bar
+        . When RAKE is defined and pickup encoder is set to a configurable profile -> every strum will send an opposite strum shortly after (70ms?). Allows for double strumming or "rake" strumming
+      - fix: Replace defective neokey
+        . One RGB is flickering, need to find if it's wiring or neopixel issue
+      - fix: Update buttonTaskCore1 to allow calibration process even when not connected to BLE
+      - feat: "overdrive" strumming
+        . When strumming, if the strum bar isn't released all the way past the threshold to reset/release the button but instead pressed again, allow strum to trigger still when fully depressed. (quickly release/press button)
+        . This is only possible with a hall effect strum bar
+      - fix: possibly update tasks and move bleTask to it's own thread/task so only one task is sending BLE events. May improve or reduce button latency
+  
+  Library required:
+    "ESP32-BLE-CompositeHID" by Mystfit
+    "Adafruit_ADXL345" by Adafruit
+    "Adafruit_DRV2605" by Adafruit
+    "Adafruit_NeoPixel" by Adafruit
+
+  HARDWARE SPECS:
+    . Lilygo T-Energy S3
+    . LG 3000mah 18650
+    . Adafruit Neokey PCB
+    . 49E Hall effect sensors
+    . DRV2605
+    . ADXL345
+
+  Board settings (changed from defaults):
+    USB CDC           = enabled
+    CPU freqency      = 80Mhz
+    Flash size        = 16MB (128Mb)
+    Partition scheme  = 16M Flash (3M/9.9M)
+    PSRAM             = disabled
+
+  WIRING:
+  (each: 1 leg -> GPIO, opposite leg -> GND)
+
+                                         +-----------------------+
+                                         | O      | BAT |      O |
+                                         |        |GPIO3|        |
+ VCC -> i2c, neopixel, hall sensor / 3V3 | [ ]               [ ] | GND    / GND
+                                   RESET | [ ]               [ ] | GPIO1  / RESET BUTTON
+               -----------------/ GPIO37 | [ ]               [ ] | GPIO2  / HOME BUTTON / WAKE FROM SLEEP
+                          START / GPIO35 | [ ]      I2C / TX [ ] | GPIO43 /-----------------
+           SELECT / MENU / BACK / GPIO36 | [ ]      I2C / RX [ ] | GPIO44 /
+           PICKGUARD TAP - SLAP / GPIO45 | [ ]               [ ] | GPIO42 /-----------------
+                                / GPIO48 | [ ]               [ ] | GND    / GND
+               -----------------/ GPIO47 | [ ]               [ ] | GPIO4  / PICKUP ADC
+                          RIGHT / GPIO21 | [ ]               [ ] | GPIO5  / NEOPIXEL
+                             UP / GPIO14 | [ ]               [ ] | GPIO6  / STRUM UP
+                           DOWN / GPIO13 | [ ]               [ ] | GPIO7  / STRUM DOWN
+                           LEFT / GPIO12 | [ ]               [ ] | GPIO17 /-----------------
+               -----------------/ GPIO11 | [ ]   HX6610S     [ ] | GPIO18
+                            GND /    GND | [ ]    |          [ ] | GPIO0  /-----------------/ strapping pin / pull-up only
+            BATTERY CHARGE GPIO / GPIO10 | [x]----+ 50R      [ ] | GPIO8  / ORANGE FRET
+                     WHAMMY ADC /  GPIO9 | [ ]               [ ] | GPIO41 / BLUE FRET
+ pull-down only / strap ------- / GPIO46 | [ ]               [ ] | GPIO40 / YELLOW FRET
+                                      NC | [ ]               [ ] | GPIO39 / RED FRET
+      QI WIRELESS -> SCHOTTKY DIODE / 5V | [ ]               [ ] | GPIO38 / GREEN FRET
+                                      NC | [ ]               [ ] | NC
+                                         |                       |
+                                         | [USB]  [QWIIC]        |
+                                         | [USB]                 |
+                                         | O                   O |
+                                         +-----------------------+
+
+  NOTE:
+    GPIO10 is bridged to pin 6 of the HX6610S with a _SMALL RESISTOR_ for charging detection. When battery is charging, the red LED is lit up and pin 6 on the HX6610S is pulled low.
+    Make sure to set GPIO10 to internal pullup.
+
+    Additionally, you can do the same thing to pin 7 on the HX6610S for standby indication. (USB power but not charging?)
+
+    GPIO43 / GPIO44 are the RX/TX pins on the QWIIC connector for an i2c tilt sensor + more
+
+
+  All digital pins use internal pull-ups — no external resistors needed.
+
+  NOTE:
+  ======
+  Only RTC IO can be used as a source for external wake
+  source. They are pins: 0,2,4,12-15,25-27,32-39.
+
+  ADC pin is for a Lilygo T-Energy S3 battery voltage divider (GPIO03)
+------------------------------------------------------------------------------------------------------------------------------- */
+
 #include <Arduino.h>
 #include "driver/rtc_io.h"
 #include "Config.h"
