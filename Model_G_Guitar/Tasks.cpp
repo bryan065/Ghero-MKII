@@ -97,79 +97,77 @@ void buttonTaskCore1(void *pvParameters) {
       continue;
     }
     
-    if (compositeHID.isConnected()) {
-      uint64_t nowUs = esp_timer_get_time();
-      bool stateChanged = false;
+    uint64_t nowUs = esp_timer_get_time();
+    bool stateChanged = false;
 
-      for (size_t i = 0; i < BUTTON_COUNT; i++) {
-        // If Hall Effect mode is detected, bypass digital polling on strum pins
-        if (isHallEffectMode && (BUTTON_MAP[i].pin == STRUM_UP_PIN || BUTTON_MAP[i].pin == STRUM_DOWN_PIN)) {
-          continue;
-        }
+    for (size_t i = 0; i < BUTTON_COUNT; i++) {
+      // If Hall Effect mode is detected, bypass digital polling on strum pins
+      if (isHallEffectMode && (BUTTON_MAP[i].pin == STRUM_UP_PIN || BUTTON_MAP[i].pin == STRUM_DOWN_PIN)) {
+        continue;
+      }
 
-        // Read active LOW physical state
-        bool rawPressed = (digitalRead(BUTTON_MAP[i].pin) == LOW);
+      // Read active LOW physical state
+      bool rawPressed = (digitalRead(BUTTON_MAP[i].pin) == LOW);
 
-        // Standard Button Debounce Routine for ALL buttons
-        if (rawPressed != lastDebouncedState[i]) {
-          if (nowUs - lastStateChangeUs[i] >= BUTTON_MAP[i].debounceUs) {
-            lastDebouncedState[i] = rawPressed;
-            lastStateChangeUs[i] = nowUs;
+      // Standard Button Debounce Routine for ALL buttons
+      if (rawPressed != lastDebouncedState[i]) {
+        if (nowUs - lastStateChangeUs[i] >= BUTTON_MAP[i].debounceUs) {
+          lastDebouncedState[i] = rawPressed;
+          lastStateChangeUs[i] = nowUs;
 
-            // Handle press/release for HELPER_FUNCTION tracking
-            if (BUTTON_MAP[i].id == HELPER_FUNCTION) {
-              if (rawPressed) {
-                presetPressStartMs = millis();
-                calibrationHandled = false;
-              }
-              else {
-                presetPressStartMs = 0;
-              }
+          // Handle press/release for HELPER_FUNCTION tracking
+          if (BUTTON_MAP[i].id == HELPER_FUNCTION) {
+            if (rawPressed) {
+              presetPressStartMs = millis();
+              calibrationHandled = false;
             }
-
-            // Update gamepad state on BOTH press AND release
-            if (xSemaphoreTake(xBleMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-              updateGamepadButton(BUTTON_MAP[i].id, rawPressed);
-              stateChanged = true;
-              xSemaphoreGive(xBleMutex);
+            else {
+              presetPressStartMs = 0;
             }
-
-            // Haptic feedback with mechanical strum keys
-            //if (rawPressed && (BUTTON_MAP[i].pin == STRUM_UP_PIN || BUTTON_MAP[i].pin == STRUM_DOWN_PIN)) {
-            //  triggerStrumHaptic();
-            //}
           }
-        }
 
-        // ---
-        // Independent 3-Second Hold Check for Manual Re-Calibration
-        // ---
-        if (BUTTON_MAP[i].id == HELPER_FUNCTION && lastDebouncedState[i] && !calibrationHandled && isHallEffectMode) {
-          if (millis() - presetPressStartMs >= 3000) {
-            calibrationHandled = true; // Mark handled so it doesn't trigger repeatedly
-
-            if (Serial) Serial.println("[STRUM SYSTEM] Manual 3-Second Hold Detected: Re-Calibrating Strum Sensors!");
-
-            isCalibratingActive = true; 
-            calibrateStrumFull(); // Interactive 5-second calibration
-            isCalibratingActive = false;
+          // Update gamepad state on BOTH press AND release
+          if (xSemaphoreTake(xBleMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+            updateGamepadButton(BUTTON_MAP[i].id, rawPressed);
+            stateChanged = true;
+            xSemaphoreGive(xBleMutex);
           }
+
+          // Haptic feedback with mechanical strum keys
+          //if (rawPressed && (BUTTON_MAP[i].pin == STRUM_UP_PIN || BUTTON_MAP[i].pin == STRUM_DOWN_PIN)) {
+          //  triggerStrumHaptic();
+          //}
         }
       }
-      // -----------------------------------
 
-      // If any button state changed, send the combined report over BLE
-      if (stateChanged) {
-        // Enforce a minimum interval between BLE reports to prevent queue saturation
-        while(millis() - lastBleReportMs < BLE_REPORT_INTERVAL_MS) {
-            vTaskDelay(pdMS_TO_TICKS(1)); 
-        }
+      // ---
+      // Independent 3-Second Hold Check for Manual Re-Calibration
+      // ---
+      if (BUTTON_MAP[i].id == HELPER_FUNCTION && lastDebouncedState[i] && !calibrationHandled && isHallEffectMode) {
+        if (millis() - presetPressStartMs >= 3000) {
+          calibrationHandled = true; // Mark handled so it doesn't trigger repeatedly
 
-        if (xSemaphoreTake(xBleMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-          gamepad->sendGamepadReport();
-          lastActivityTime = millis();
-          xSemaphoreGive(xBleMutex);
+          if (Serial) Serial.println("[STRUM SYSTEM] Manual 3-Second Hold Detected: Re-Calibrating Strum Sensors!");
+
+          isCalibratingActive = true; 
+          calibrateStrumFull(); // Interactive 5-second calibration
+          isCalibratingActive = false;
         }
+      }
+    }
+    // -----------------------------------
+
+    // If any button state changed, send the combined report over BLE
+    if (stateChanged && compositeHID.isConnected()) {
+      // Enforce a minimum interval between BLE reports to prevent queue saturation
+      while(millis() - lastBleReportMs < BLE_REPORT_INTERVAL_MS) {
+          vTaskDelay(pdMS_TO_TICKS(1)); 
+      }
+
+      if (xSemaphoreTake(xBleMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+        gamepad->sendGamepadReport();
+        lastActivityTime = millis();
+        xSemaphoreGive(xBleMutex);
       }
     }
 
@@ -374,7 +372,7 @@ void hallEffectStrumTaskCore1(void *pvParameters) {
 void rgbTaskCore0(void *pvParameters) {
   uint16_t rainbowHue = 0;
   strip.begin();
-  //strip.setBrightness(128);
+  strip.setBrightness(128);
 
   for (;;) {
     // --- Calibration Flash State Machine (Highest Priority) ---
@@ -429,22 +427,22 @@ void rgbTaskCore0(void *pvParameters) {
 
     // --- NeoPixel #1: Battery / Charging Status ---
     if (isCharging) {
-      strip.setPixelColor(0, strip.Color(0, 0, 80));       // BLUE: Charging
+      strip.setPixelColor(0, strip.Color(0, 0, 50));       // BLUE: Charging
     }
     else if (batteryLevel < 10) {
       // Non-blocking 2Hz blink when below 10%
       bool blinkState = (millis() / 250) % 2;
       if (blinkState) {
-        strip.setPixelColor(0, strip.Color(80, 0, 0));    // RED (ON)
+        strip.setPixelColor(0, strip.Color(50, 0, 0));    // RED (ON)
       } else {
         strip.setPixelColor(0, strip.Color(0, 0, 0));      // OFF
       }
     } else if (batteryLevel < 30) {
-      strip.setPixelColor(0, strip.Color(80, 0, 0));       // RED: Low (<30%)
+      strip.setPixelColor(0, strip.Color(50, 0, 0));       // RED: Low (<30%)
     } else if (batteryLevel <= 80) {
-      strip.setPixelColor(0, strip.Color(0, 80, 0));       // GREEN: Normal (30-80%)
+      strip.setPixelColor(0, strip.Color(0, 50, 0));       // GREEN: Normal (30-80%)
     } else {
-      strip.setPixelColor(0, strip.Color(100, 100, 100));  // WHITE: Full (>80%)
+      strip.setPixelColor(0, strip.Color(50, 50, 50));  // WHITE: Full (>80%)
     }
 
     // --- NeoPixels #2 & #3: Strum Bar (Preset Feedback vs. Rainbow Effect) ---
