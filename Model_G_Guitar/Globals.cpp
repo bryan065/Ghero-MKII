@@ -49,6 +49,7 @@ int                 strumDownZeroOffset = 0;
 int                 strumUpMaxDelta = 800;   
 int                 strumDownMaxDelta = 800; 
 volatile bool       isHallEffectMode = false;
+volatile bool       mechanicalFallbackAttached = false;
 volatile uint8_t    currentPresetIndex = 0;  
 volatile uint32_t   presetShowStartMs = 0;   
 volatile bool       isCharging = false;
@@ -58,6 +59,8 @@ bool                hapticInitialized = false;
 int                 rawEma = -1;
 int16_t             lastSentWhammy = -32768;
 int16_t             lastSentTilt = -32768;
+bool                buttonsInitialized = false;
+Bounce2::Button     buttons[BUTTON_COUNT];
 
 // DRV2605 calibration data
 uint8_t             drv2605CalibrationData[3];

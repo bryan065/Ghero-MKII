@@ -1,5 +1,6 @@
 #pragma once
 #include "Config.h"
+#include <Bounce2.h>
 #include <Preferences.h>
 #include <BleCompositeHID.h>
 #include <XboxGamepadDevice.h>
@@ -91,6 +92,7 @@ extern int                 strumDownZeroOffset;
 extern int                 strumUpMaxDelta;   
 extern int                 strumDownMaxDelta; 
 extern volatile bool       isHallEffectMode;
+extern volatile bool       mechanicalFallback;
 extern volatile uint8_t    currentPresetIndex;  
 extern volatile uint32_t   presetShowStartMs;   
 extern volatile bool       isCharging;
@@ -100,6 +102,8 @@ extern bool                hapticInitialized;
 extern int                 rawEma;
 extern int16_t             lastSentWhammy;
 extern int16_t             lastSentTilt;
+extern bool                buttonsInitialized;
+extern Bounce2::Button     buttons[BUTTON_COUNT];
 
 // DRV2605 calibration data
 extern uint8_t drv2605CalibrationData[3];

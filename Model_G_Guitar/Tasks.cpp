@@ -86,9 +86,13 @@ void adcTaskCore1(void *pvParameters) {
 // Highest Priority Button & Strum Task (Core 1, Priority 5)
 // -------------------------------------------------------------------
 void buttonTaskCore1(void *pvParameters) {
-  // Variables to manage holding "HELPER_FUNCTION" for force re-calibration
-  static uint32_t presetPressStartMs = 0;
-  static bool calibrationHandled = false;
+  // Variables for calibration logic
+  static uint32_t     presetPressStartMs = 0;
+  static bool         calibrationHandled = false;
+
+  // if (!buttonsInitialized) {
+  //   if (Serial) Serial.println("[BUTTONS] Buttons were not initialized!");
+  // }
 
   for (;;) {
     // Skip processing if currently running active calibration
@@ -96,66 +100,99 @@ void buttonTaskCore1(void *pvParameters) {
       vTaskDelay(pdMS_TO_TICKS(10));
       continue;
     }
-    
-    uint64_t nowUs = esp_timer_get_time();
+
     bool stateChanged = false;
 
+    // Process buttons
     for (size_t i = 0; i < BUTTON_COUNT; i++) {
       // If Hall Effect mode is detected, bypass digital polling on strum pins
       if (isHallEffectMode && (BUTTON_MAP[i].pin == STRUM_UP_PIN || BUTTON_MAP[i].pin == STRUM_DOWN_PIN)) {
         continue;
       }
 
-      // Read active LOW physical state
-      bool rawPressed = (digitalRead(BUTTON_MAP[i].pin) == LOW);
+      buttons[i].update();
+      bool     isPressed = !buttons[i].read();
+      uint16_t id        = BUTTON_MAP[i].id;
 
-      // Standard Button Debounce Routine for ALL buttons
-      if (rawPressed != lastDebouncedState[i]) {
-        if (nowUs - lastStateChangeUs[i] >= BUTTON_MAP[i].debounceUs) {
-          lastDebouncedState[i] = rawPressed;
-          lastStateChangeUs[i] = nowUs;
+      // ---
+      // Handle button press events
+      // ---
+      if (buttons[i].fell()) {
+        stateChanged = true;
+        
+        // Special button processing (not gamepad button related)
+        switch (BUTTON_MAP[i].id) {
+          case HELPER_FUNCTION:
+            calibrationHandled = false;
+            break;
+          default:
+            break;
+        }
 
-          // Handle press/release for HELPER_FUNCTION tracking
-          if (BUTTON_MAP[i].id == HELPER_FUNCTION) {
-            if (rawPressed) {
-              presetPressStartMs = millis();
-              calibrationHandled = false;
-            }
-            else {
-              presetPressStartMs = 0;
-            }
-          }
-
-          // Update gamepad state on BOTH press AND release
-          if (xSemaphoreTake(xBleMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-            updateGamepadButton(BUTTON_MAP[i].id, rawPressed);
-            stateChanged = true;
-            xSemaphoreGive(xBleMutex);
-          }
-
-          // Haptic feedback with mechanical strum keys
-          //if (rawPressed && (BUTTON_MAP[i].pin == STRUM_UP_PIN || BUTTON_MAP[i].pin == STRUM_DOWN_PIN)) {
-          //  triggerStrumHaptic();
-          //}
+        // Haptic feedback for strum keys (mechanical)
+        if (BUTTON_MAP[i].pin == STRUM_UP_PIN || BUTTON_MAP[i].pin == STRUM_DOWN_PIN) {
+          triggerStrumHaptic();
         }
       }
 
       // ---
-      // Independent 3-Second Hold Check for Manual Re-Calibration
+      // Handle button release events
       // ---
-      if (BUTTON_MAP[i].id == HELPER_FUNCTION && lastDebouncedState[i] && !calibrationHandled && isHallEffectMode) {
-        if (millis() - presetPressStartMs >= 3000) {
-          calibrationHandled = true; // Mark handled so it doesn't trigger repeatedly
+      if (buttons[i].rose()) {
+        stateChanged = true;
 
-          if (Serial) Serial.println("[STRUM SYSTEM] Manual 3-Second Hold Detected: Re-Calibrating Strum Sensors!");
+        // Special button processing (not gamepad button related)
+        switch (BUTTON_MAP[i].id) {
+          default:
+            break;
+        }
+        
+        // Reset calibration timing
+        // if (BUTTON_MAP[i].id == HELPER_FUNCTION) {
+        //   presetPressStartMs = 0;
+        // }
+      }
 
-          isCalibratingActive = true; 
-          calibrateStrumFull(); // Interactive 5-second calibration
-          isCalibratingActive = false;
+      // ---
+      // Handle button hold events -> 3s hold
+      // ---
+      if ( isPressed && !calibrationHandled && isHallEffectMode && buttons[i].currentDuration() > 3000 ) {
+
+        // Special button processing (not gamepad button related)
+        switch (BUTTON_MAP[i].id) {
+          case HELPER_FUNCTION:
+            calibrationHandled = true;
+
+            if (Serial) Serial.println("[STRUM SYSTEM] Manual 3-Second Hold Detected: Re-Calibrating Strum Sensors!");
+
+            isCalibratingActive = true; 
+            calibrateStrumFull(); // Interactive 5-second calibration
+            isCalibratingActive = false;
+            break;
+          default:
+            break;
+        }
+      }
+
+      // if (BUTTON_MAP[i].id == HELPER_FUNCTION && isPressed && !calibrationHandled && isHallEffectMode) {
+      //   if (millis() - presetPressStartMs >= 3000) {
+      //     calibrationHandled = true;
+
+      //     if (Serial) Serial.println("[STRUM SYSTEM] Manual 3-Second Hold Detected: Re-Calibrating Strum Sensors!");
+
+      //     isCalibratingActive = true; 
+      //     calibrateStrumFull(); // Interactive 5-second calibration
+      //     isCalibratingActive = false;
+      //   }
+      // }
+
+      if (buttons[i].changed()) {
+        if (xSemaphoreTake(xBleMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+          updateGamepadButton(BUTTON_MAP[i].id, isPressed);
+          xSemaphoreGive(xBleMutex);
         }
       }
     }
-    // -----------------------------------
 
     // If any button state changed, send the combined report over BLE
     if (stateChanged && compositeHID.isConnected()) {

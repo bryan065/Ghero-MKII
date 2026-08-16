@@ -520,3 +520,21 @@ void initHapticDriver() {
     if (Serial) Serial.println("[MODULES] DRV2605L non-functional or disconnected.");
   }
 }
+
+// -------------------------------------------------------------------
+// Initialize debounce
+// -------------------------------------------------------------------
+bool initButtonBounce() {
+  // Configure non-strum physical button pins as inputs with pull-ups
+  for (size_t i = 0; i < BUTTON_COUNT; i++) {
+    if (isHallEffectMode && (BUTTON_MAP[i].pin == STRUM_UP_PIN || BUTTON_MAP[i].pin == STRUM_DOWN_PIN)) {
+      continue; 
+    }
+
+    buttons[i].attach(BUTTON_MAP[i].pin, INPUT_PULLUP);
+    buttons[i].interval(BUTTON_DEBOUNCE_MS);
+    buttons[i].setPressedState(LOW); 
+  }
+  
+  return true;
+}

@@ -40,6 +40,7 @@
     "Adafruit_ADXL345" by Adafruit
     "Adafruit_DRV2605" by Adafruit
     "Adafruit_NeoPixel" by Adafruit
+    "bounce2"
 
   HARDWARE SPECS:
     . Lilygo T-Energy S3
@@ -250,11 +251,8 @@ void setup() {
   }
 
   // Configure non-strum physical button pins as inputs with pull-ups
-  for (size_t i = 0; i < BUTTON_COUNT; i++) {
-    if (isHallEffectMode && (BUTTON_MAP[i].pin == STRUM_UP_PIN || BUTTON_MAP[i].pin == STRUM_DOWN_PIN)) {
-      continue; 
-    }
-    pinMode(BUTTON_MAP[i].pin, INPUT_PULLUP);
+  if (!buttonsInitialized) {
+    buttonsInitialized = initButtonBounce();
   }
 
   // Start RTOS Tasks

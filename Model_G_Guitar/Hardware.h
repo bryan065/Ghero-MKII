@@ -16,6 +16,7 @@ bool checkDV2605Calibration(void);
 bool loadDRV2605Calibration(void);
 void saveDRV2605Calibration(void);
 void initHapticDriver(void);
+bool initButtonBounce(void);
 String  getFirmwareSignature(void);
 uint8_t getBatteryChargeLevel(uint32_t batteryMv, const BatteryProfile* curve, size_t numPoints);
 

@@ -17,5 +17,4 @@
 struct ButtonConfig {
   uint8_t  pin;
   uint16_t id;
-  uint32_t debounceUs;
 };

@@ -12,10 +12,11 @@
 // ===================================================================
 // Settings
 // ===================================================================
-#define NUM_LEDS          3
-#define BATTERY_TIMEOUT   (10 * (60 * 1000))
-#define HELPER_SLAP       XBOX_BUTTON_SELECT
-#define BATTERY_CURVE     lg_hg2              // Battery Selection (generic, lg_hg2)
+#define NUM_LEDS            3
+#define BATTERY_TIMEOUT     (10 * (60 * 1000))
+#define HELPER_SLAP         XBOX_BUTTON_SELECT
+#define BATTERY_CURVE       lg_hg2              // Battery Selection (generic, lg_hg2)
+#define BUTTON_DEBOUNCE_MS  5
 #define RAKE
 
 // ===================================================================
@@ -41,21 +42,21 @@ constexpr size_t BUTTON_COUNT = 15;
 
 // { GPIO_PIN, BUTTON_ID, DEBOUNCE_TIME }
 const ButtonConfig BUTTON_MAP[BUTTON_COUNT] = {
-  { 38,             HELPER_LT,            5000 }, 
-  { 39,             XBOX_BUTTON_LB,       5000 },
-  { 40,             XBOX_BUTTON_RB,       5000 },
-  { 41,             HELPER_RT,            5000 }, 
-  { 8,              XBOX_BUTTON_A,        5000 },
-  { 35,             XBOX_BUTTON_START,    5000 },
-  { 36,             XBOX_BUTTON_SELECT,   5000 },
-  { 1,              HELPER_FUNCTION,      5000 }, 
-  { 14,             HELPER_DPAD_UP,       5000 }, 
-  { 13,             HELPER_DPAD_DOWN,     5000 }, 
-  { 12,             HELPER_DPAD_LEFT,     5000 }, 
-  { 21,             HELPER_DPAD_RIGHT,    5000 }, 
-  { STRUM_UP_PIN,   HELPER_DPAD_UP,       8000 }, 
-  { STRUM_DOWN_PIN, HELPER_DPAD_DOWN,     8000 }, 
-  { WAKEUP_PIN,     XBOX_BUTTON_HOME,     5000 }
+  { 38,             HELPER_LT }, 
+  { 39,             XBOX_BUTTON_LB },
+  { 40,             XBOX_BUTTON_RB },
+  { 41,             HELPER_RT }, 
+  { 8,              XBOX_BUTTON_A },
+  { 35,             XBOX_BUTTON_START },
+  { 36,             XBOX_BUTTON_SELECT },
+  { 1,              HELPER_FUNCTION }, 
+  { 14,             HELPER_DPAD_UP }, 
+  { 13,             HELPER_DPAD_DOWN }, 
+  { 12,             HELPER_DPAD_LEFT }, 
+  { 21,             HELPER_DPAD_RIGHT }, 
+  { STRUM_UP_PIN,   HELPER_DPAD_UP }, 
+  { STRUM_DOWN_PIN, HELPER_DPAD_DOWN }, 
+  { WAKEUP_PIN,     XBOX_BUTTON_HOME }
 };
 
 // ===================================================================
