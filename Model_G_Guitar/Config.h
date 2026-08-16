@@ -7,7 +7,7 @@
 
 // DISABLE DEBUG FLAG BEFORE FINAL PRODUCTION USE
 #define DEBUG
-//#define DEBUG_HALL
+#define DEBUG_HALL
 
 // ===================================================================
 // Settings

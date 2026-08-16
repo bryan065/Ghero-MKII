@@ -220,32 +220,34 @@ void hallEffectStrumTaskCore1(void *pvParameters) {
   // Too jittery? Increase CONFIRM_SAMPLES to 4 or 5 (adds ~4-5ms latency to initial trigger)
   // Too sluggish? Reduce EMA factor: change (filtered * 3 + raw) >> 2 to (filtered * 2 + raw * 2) >> 2 for less filtering
   // Hysteresis too aggressive? Lower 0.15f to 0.10f
-  static int EMA_FACTOR = 3;
-  static float HYSTERESIS = 0.15f;
+  static int      EMA_FACTOR = 3;
+  static float    HYSTERESIS = 0.15f;
 
   // Variables for hall effect strum actuation
-  static bool hallStrumUpState = false;
-  static bool hallStrumDownState = false;
+  static bool     hallStrumUpState = false;
+  static bool     hallStrumDownState = false;
+
+  // Overdrive State
+  static int      lastFilteredUpRaw = 0;       // For velocity calculation
+  static int      lastFilteredDownRaw = 0;     // For velocity calculation
+  static uint32_t lastOverdriveUpMs = 0;
+  static uint32_t lastOverdriveDownMs = 0;
+  static uint32_t lastOverdriveDebugMs = 0;
+  static uint64_t lastVelocityTimeUs = 0;
+  static int      lastRawUp = 0;
+  static int      lastRawDown = 0;
+
+  const uint32_t  OVERDRIVE_COOLDOWN_MS = 60;
+  const float     OVERDRIVE_VELOCITY_THRESHOLD = 100.0f;
 
   // EMA filtering for noise reduction (smooth but responsive)
-  static int filteredUpRaw = -1;
-  static int filteredDownRaw = -1;
+  static int      filteredUpRaw = -1;
+  static int      filteredDownRaw = -1;
 
   // Consecutive confirmation counters to prevent jitter triggers near threshold
-  static int upConfirmCount = 0;
-  static int downConfirmCount = 0;
-  const int CONFIRM_SAMPLES = 3; // Require N consecutive samples past threshold before triggering
-
-  // Debug tracking variables with EMA smoothing
-#ifdef DEBUG
-    static float emaUpRaw = 0.0f;
-    static float emaDownRaw = 0.0f;
-    static float emaUpDelta = 0.0f;
-    static float emaDownDelta = 0.0f;
-    static bool emaInitialized = false;
-    const float EMA_ALPHA = 0.2f;  // Smoothing factor: 0.1 = heavy smoothing, 0.5 = light smoothing
-    const int DEBUG_CHANGE_THRESHOLD = 50;  // Increased threshold since values are now smoothed
-#endif
+  static int      upConfirmCount = 0;
+  static int      downConfirmCount = 0;
+  const int       CONFIRM_SAMPLES = 3;
 
   for (;;) {
     // Skip processing if currently running active calibration
@@ -303,35 +305,45 @@ void hallEffectStrumTaskCore1(void *pvParameters) {
         int upDelta = abs(filteredUpRaw - strumUpZeroOffset);
         int downDelta = abs(filteredDownRaw - strumDownZeroOffset);
 
-        // ===== DEBUG OUTPUT =====
+        // OVERDRIVE: Calculate velocity using RAW values + actual elapsed time
+        uint64_t elapsedUs = nowUs - lastVelocityTimeUs;
+        float elapsedMs = elapsedUs / 1000.0f;
+        
+        // Avoid division by zero and use minimum 0.5ms for stability
+        if (elapsedMs < 0.5f) elapsedMs = 0.5f;
+        
+        // Velocity = change in raw ADC / elapsed time (ADC units per ms)
+        float upVelocity = (float)(upRaw - lastRawUp) / elapsedMs;
+        float downVelocity = (float)(downRaw - lastRawDown) / elapsedMs;
+        
+        lastRawUp = upRaw;
+        lastRawDown = downRaw;
+        lastVelocityTimeUs = nowUs;
+
+        // Check if cooldown expired (for overdrive eligibility)
+        bool overdriveCooldownUp = (millis() - lastOverdriveUpMs > OVERDRIVE_COOLDOWN_MS);
+        bool overdriveCooldownDown = (millis() - lastOverdriveDownMs > OVERDRIVE_COOLDOWN_MS);
+
 #ifdef DEBUG_HALL
-        // Initialize EMA on first read to avoid ramp-up from zero
-        if (!emaInitialized) {
-          emaUpRaw = upRaw;
-          emaDownRaw = downRaw;
-          emaUpDelta = upDelta;
-          emaDownDelta = downDelta;
-          emaInitialized = true;
-        }
-
-        // Apply Exponential Moving Average
-        emaUpRaw = (emaUpRaw * (1.0f - EMA_ALPHA)) + (upRaw * EMA_ALPHA);
-        emaDownRaw = (emaDownRaw * (1.0f - EMA_ALPHA)) + (downRaw * EMA_ALPHA);
-        emaUpDelta = (emaUpDelta * (1.0f - EMA_ALPHA)) + (upDelta * EMA_ALPHA);
-        emaDownDelta = (emaDownDelta * (1.0f - EMA_ALPHA)) + (downDelta * EMA_ALPHA);
-
-        // Only print when smoothed values change noticeably
-        if (Serial && (abs(emaUpRaw - upRaw) > DEBUG_CHANGE_THRESHOLD || 
-                        abs(emaDownRaw - downRaw) > DEBUG_CHANGE_THRESHOLD ||
-                        abs(emaUpDelta - upDelta) > DEBUG_CHANGE_THRESHOLD ||
-                        abs(emaDownDelta - downDelta) > DEBUG_CHANGE_THRESHOLD)) {
-          Serial.printf("[STRUM DEBUG] UP: raw=%.0f, delta=%.0f, thresh=%d, state=%s | "
-                        "DN: raw=%.0f, delta=%.0f, thresh=%d, state=%s\n",
-                        emaUpRaw, emaUpDelta, upThresholdDelta, hallStrumUpState ? "PRESSED" : "released",
-                        emaDownRaw, emaDownDelta, downThresholdDelta, hallStrumDownState ? "PRESSED" : "released");
+        // Throttle verbose debug output to every 200ms
+        if (Serial && (millis() - lastOverdriveDebugMs > 200)) {
+          lastOverdriveDebugMs = millis();
+          Serial.printf("[STRUM SYSTEM] Overdrive - UpVel: %.1f | DnVel: %.1f | UpCd: %u%% | DnCd: %u%%\n",
+            upVelocity, downVelocity,
+            overdriveCooldownUp ? 100 : (int)((float)(OVERDRIVE_COOLDOWN_MS - (millis() - lastOverdriveUpMs)) / OVERDRIVE_COOLDOWN_MS * 100),
+            overdriveCooldownDown ? 100 : (int)((float)(OVERDRIVE_COOLDOWN_MS - (millis() - lastOverdriveDownMs)) / OVERDRIVE_COOLDOWN_MS * 100));
         }
 #endif
-                // ===== END DEBUG OUTPUT =====
+
+        // OVERDRIVE: Only eligible if currently held AND cooldown expired
+        // This allows hard strums to trigger even if not fully released
+        bool overdriveUp = (upVelocity > OVERDRIVE_VELOCITY_THRESHOLD) 
+                         && overdriveCooldownUp 
+                         && hallStrumUpState;
+
+        bool overdriveDown = (downVelocity > OVERDRIVE_VELOCITY_THRESHOLD) 
+                           && overdriveCooldownDown 
+                           && hallStrumDownState;
 
         // UP STRUM: Consecutive confirmation for initial trigger, hysteresis for release
         if (upDelta > upThresholdDelta) {
@@ -352,14 +364,38 @@ void hallEffectStrumTaskCore1(void *pvParameters) {
           downConfirmCount = 0;
         }
 
-        // State transitions: need CONFIRM_SAMPLES to arm, hysteresis to disarm
+        // OVERDRIVE: Reset state so normal path can immediately re-trigger
+        if (overdriveUp) {
+          hallStrumUpState = false;
+
+          // Event log (always, if Serial available)
+          if (Serial) Serial.printf("[STRUM SYSTEM] OVERDRIVE UP! Vel: %.1f (th: %.1f)\n", upVelocity, OVERDRIVE_VELOCITY_THRESHOLD);
+        }
+
+        if (overdriveDown) {
+          hallStrumDownState = false;
+
+          // Event log (always, if Serial available)
+          if (Serial) Serial.printf("[STRUM SYSTEM] OVERDRIVE DOWN! Vel: %.1f (th: %.1f)\n", downVelocity, OVERDRIVE_VELOCITY_THRESHOLD);
+        }
+
+        // State transitions: normal confirmation OR overdrive triggers
+        // Overdrive bypasses confirmation count for rapid re-trigger when holding strum bar
         bool newStrumUp = (upConfirmCount >= CONFIRM_SAMPLES) ? true
                       : (hallStrumUpState && (upDelta > (upThresholdDelta - upHysteresis)));
         bool newStrumDown = (downConfirmCount >= CONFIRM_SAMPLES) ? true
                         : (hallStrumDownState && (downDelta > (downThresholdDelta - downHysteresis)));
 
+        // Apply overdrive as an additional trigger condition
+        newStrumUp = newStrumUp || overdriveUp;
+        newStrumDown = newStrumDown || overdriveDown;
+
       if (newStrumUp != hallStrumUpState) {
           hallStrumUpState = newStrumUp;
+          
+          // Update cooldown timestamp on overdrive trigger
+          if (overdriveUp) lastOverdriveUpMs = millis();
+
           if (xSemaphoreTake(xBleMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
             updateGamepadButton(HALL_STRUM_UP, hallStrumUpState);
             stateChanged = true;
@@ -372,6 +408,10 @@ void hallEffectStrumTaskCore1(void *pvParameters) {
 
         if (newStrumDown != hallStrumDownState) {
           hallStrumDownState = newStrumDown;
+          
+          // Update cooldown timestamp on overdrive trigger
+          if (overdriveDown) lastOverdriveDownMs = millis();
+
           if (xSemaphoreTake(xBleMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
             updateGamepadButton(HALL_STRUM_DOWN, hallStrumDownState);
             stateChanged = true;
