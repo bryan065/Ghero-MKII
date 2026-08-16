@@ -29,10 +29,6 @@
         . When RAKE is defined and pickup encoder is set to a configurable profile -> every strum will send an opposite strum shortly after (70ms?). Allows for double strumming or "rake" strumming
       - fix: Replace defective neokey
         . One RGB is flickering, need to find if it's wiring or neopixel issue
-      - fix: Update buttonTaskCore1 to allow calibration process even when not connected to BLE
-      - feat: "overdrive" strumming
-        . When strumming, if the strum bar isn't released all the way past the threshold to reset/release the button but instead pressed again, allow strum to trigger still when fully depressed. (quickly release/press button)
-        . This is only possible with a hall effect strum bar
       - fix: possibly update tasks and move bleTask to it's own thread/task so only one task is sending BLE events. May improve or reduce button latency
   
   Library required:
