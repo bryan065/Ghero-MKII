@@ -646,7 +646,7 @@ void whammyTask(void *pvParameters) {
             currentPresetIndex = newPresetIndex;
 
             // Trigger the 1-second RGB indicator
-            //presetShowStartMs = millis();
+            presetShowStartMs = millis();
 
             if (Serial) Serial.printf("[STRUM SYSTEM] Pickup switched to Strum Preset Index: %d\n", currentPresetIndex);
 
