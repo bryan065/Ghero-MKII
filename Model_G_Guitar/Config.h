@@ -13,6 +13,7 @@
 // Settings
 // ===================================================================
 #define NUM_LEDS            3
+#define LED_BRIGHTNESS      160
 #define BATTERY_TIMEOUT     (10 * (60 * 1000))
 #define HELPER_SLAP         XBOX_BUTTON_SELECT
 #define BATTERY_CURVE       lg_hg2              // Battery Selection (generic, lg_hg2)

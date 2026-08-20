@@ -11,7 +11,7 @@ void IRAM_ATTR adxlTapISR() {
 // -------------------------------------------------------------------
 // Core 1 Low Priority Tap Task (Pickguard Slap)
 // -------------------------------------------------------------------
-void tapTaskCore1(void *pvParameters) {
+void tapTaskCore0(void *pvParameters) {
   for (;;) {
     // Wait for the ISR to signal a tap event
     if (xSemaphoreTake(xTapSemaphore, portMAX_DELAY) == pdTRUE) {
@@ -409,7 +409,12 @@ void hallEffectStrumTaskCore1(void *pvParameters) {
 void rgbTaskCore0(void *pvParameters) {
   uint16_t rainbowHue = 0;
   strip.begin();
-  strip.setBrightness(128);
+
+#ifdef LED_BRIGHTNESS
+  if (strip.getBrightness() > LED_BRIGHTNESS) strip.setBrightness(LED_BRIGHTNESS);
+#elif
+  if (strip.getBrightness() > 128) strip.setBrightness(128);
+#endif
 
   for (;;) {
     // --- Calibration Flash State Machine (Highest Priority) ---
@@ -464,22 +469,22 @@ void rgbTaskCore0(void *pvParameters) {
 
     // --- NeoPixel #1: Battery / Charging Status ---
     if (isCharging) {
-      strip.setPixelColor(0, strip.Color(0, 0, 50));       // BLUE: Charging
+      strip.setPixelColor(0, strip.Color(0, 0, 30));       // BLUE: Charging
     }
     else if (batteryLevel < 10) {
       // Non-blocking 2Hz blink when below 10%
       bool blinkState = (millis() / 250) % 2;
       if (blinkState) {
-        strip.setPixelColor(0, strip.Color(50, 0, 0));    // RED (ON)
+        strip.setPixelColor(0, strip.Color(30, 0, 0));    // RED (ON)
       } else {
         strip.setPixelColor(0, strip.Color(0, 0, 0));      // OFF
       }
     } else if (batteryLevel < 30) {
-      strip.setPixelColor(0, strip.Color(50, 0, 0));       // RED: Low (<30%)
+      strip.setPixelColor(0, strip.Color(30, 0, 0));       // RED: Low (<30%)
     } else if (batteryLevel <= 80) {
-      strip.setPixelColor(0, strip.Color(0, 50, 0));       // GREEN: Normal (30-80%)
+      strip.setPixelColor(0, strip.Color(0, 30, 0));       // GREEN: Normal (30-80%)
     } else {
-      strip.setPixelColor(0, strip.Color(50, 50, 50));  // WHITE: Full (>80%)
+      strip.setPixelColor(0, strip.Color(30, 50, 30));  // WHITE: Full (>80%)
     }
 
     // --- NeoPixels #2 & #3: Strum Bar (Preset Feedback vs. Rainbow Effect) ---
@@ -500,6 +505,8 @@ void rgbTaskCore0(void *pvParameters) {
       rainbowHue += 256; // Rotate rainbow colors
     }
 
+    delay(10);
+    //delayMicroseconds(100);
     strip.show();
     vTaskDelay(pdMS_TO_TICKS(20)); // ~50Hz refresh rate
   }

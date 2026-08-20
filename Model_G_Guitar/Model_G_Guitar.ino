@@ -260,11 +260,11 @@ void setup() {
 #endif
 
 #ifdef NEOPIXEL_PIN
-  xTaskCreatePinnedToCore(rgbTaskCore0,     "RgbTaskCore0",     3072, NULL, 1, &rgbTaskHandle,  0);
+  xTaskCreatePinnedToCore(rgbTaskCore0,     "RgbTaskCore0",     4096, NULL, 4, &rgbTaskHandle,  1);
 #endif
 
 #ifdef WHAMMY_ADC_PIN
-  xTaskCreatePinnedToCore(whammyTaskCore0,  "WhammyTaskCore0",  4096, NULL, 1, NULL,            0);
+  xTaskCreatePinnedToCore(whammyTaskCore0,  "WhammyTaskCore0",  4096, NULL, 2, NULL,            0);
 #endif
   
 #ifdef BATTERY_ADC_PIN
@@ -273,7 +273,7 @@ void setup() {
   
   if (accelInitialized) xTaskCreatePinnedToCore(tiltTaskCore0,            "TiltTaskCore0",  4096, NULL, 1, NULL,                       0);
   if (isHallEffectMode) xTaskCreatePinnedToCore(hallEffectStrumTaskCore1, "hallStrumTask",  8192, NULL, 5, &hallEffectStrumTaskHandle, 1);
-  if (accelInitialized) xTaskCreatePinnedToCore(tapTaskCore1,             "TapTaskCore1",   3072, NULL, 1, NULL,                       1);
+  if (accelInitialized) xTaskCreatePinnedToCore(tapTaskCore0,             "TapTaskCore0",   3072, NULL, 2, NULL,                       0);
   
   // Calibrate zero offset of hall sensors
   if (isHallEffectMode) {
@@ -294,7 +294,6 @@ void setup() {
   esp_sleep_enable_ext0_wakeup((gpio_num_t)WAKEUP_PIN, 0);
 
   lastActivityTime = millis();
-  presetShowStartMs = millis();
 }
 
 void loop() {
