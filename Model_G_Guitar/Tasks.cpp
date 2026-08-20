@@ -146,11 +146,6 @@ void buttonTask(void *pvParameters) {
           default:
             break;
         }
-        
-        // Reset calibration timing
-        // if (BUTTON_MAP[i].id == HELPER_FUNCTION) {
-        //   presetPressStartMs = 0;
-        // }
       }
 
       // ---
@@ -173,18 +168,6 @@ void buttonTask(void *pvParameters) {
             break;
         }
       }
-
-      // if (BUTTON_MAP[i].id == HELPER_FUNCTION && isPressed && !calibrationHandled && isHallEffectMode) {
-      //   if (millis() - presetPressStartMs >= 3000) {
-      //     calibrationHandled = true;
-
-      //     if (Serial) Serial.println("[STRUM SYSTEM] Manual 3-Second Hold Detected: Re-Calibrating Strum Sensors!");
-
-      //     isCalibratingActive = true; 
-      //     calibrateStrumFull(); // Interactive 5-second calibration
-      //     isCalibratingActive = false;
-      //   }
-      // }
 
       if (buttons[i].changed()) {
         if (xSemaphoreTake(xBleMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
