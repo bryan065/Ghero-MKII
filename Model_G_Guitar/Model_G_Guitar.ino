@@ -253,27 +253,27 @@ void setup() {
 
   // Start RTOS Tasks
   //   [task], [name], [stack size], [parameter], [priority], [handle], [core]
-  xTaskCreatePinnedToCore(buttonTaskCore1,  "ButtonTaskCore1",  8192, NULL, 5, NULL,            1);
+  xTaskCreatePinnedToCore(buttonTask,  "ButtonTask",  8192, NULL, 5, NULL,            1);
 
 #if defined(WHAMMY_ADC_PIN) || defined(PICKUP_ADC_PIN) || defined(BATTERY_ADC_PIN)
-  xTaskCreatePinnedToCore(adcTaskCore1,     "AdcTaskCore1",     4096, NULL, 4, NULL,            1);
+  xTaskCreatePinnedToCore(adcTask,     "AdcTask",     4096, NULL, 4, NULL,            1);
 #endif
 
 #ifdef NEOPIXEL_PIN
-  xTaskCreatePinnedToCore(rgbTaskCore0,     "RgbTaskCore0",     4096, NULL, 4, &rgbTaskHandle,  1);
+  xTaskCreatePinnedToCore(rgbTask,     "RgbTask",     4096, NULL, 4, &rgbTaskHandle,  1);
 #endif
 
 #ifdef WHAMMY_ADC_PIN
-  xTaskCreatePinnedToCore(whammyTaskCore0,  "WhammyTaskCore0",  4096, NULL, 2, NULL,            0);
+  xTaskCreatePinnedToCore(whammyTask,  "WhammyTask",  4096, NULL, 2, NULL,            0);
 #endif
   
 #ifdef BATTERY_ADC_PIN
-  xTaskCreatePinnedToCore(batteryTaskCore0, "BatteryTaskCore0", 4096, NULL, 1, NULL,            0);
+  xTaskCreatePinnedToCore(batteryTask, "BatteryTask", 4096, NULL, 1, NULL,            0);
 #endif
   
-  if (accelInitialized) xTaskCreatePinnedToCore(tiltTaskCore0,            "TiltTaskCore0",  4096, NULL, 1, NULL,                       0);
-  if (isHallEffectMode) xTaskCreatePinnedToCore(hallEffectStrumTaskCore1, "hallStrumTask",  8192, NULL, 5, &hallEffectStrumTaskHandle, 1);
-  if (accelInitialized) xTaskCreatePinnedToCore(tapTaskCore0,             "TapTaskCore0",   3072, NULL, 2, NULL,                       0);
+  if (accelInitialized) xTaskCreatePinnedToCore(tiltTask,            "TiltTask",  4096, NULL, 1, NULL,                            0);
+  if (isHallEffectMode) xTaskCreatePinnedToCore(hallEffectStrumTask, "hallStrumTask",  8192, NULL, 5, &hallEffectStrumTaskHandle, 1);
+  if (accelInitialized) xTaskCreatePinnedToCore(tapTask,             "TapTask",   3072, NULL, 2, NULL,                            0);
   
   // Calibrate zero offset of hall sensors
   if (isHallEffectMode) {

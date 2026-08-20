@@ -9,9 +9,9 @@ void IRAM_ATTR adxlTapISR() {
 }
 
 // -------------------------------------------------------------------
-// Core 1 Low Priority Tap Task (Pickguard Slap)
+// Core 0 Low Priority Tap Task (Pickguard Slap)
 // -------------------------------------------------------------------
-void tapTaskCore0(void *pvParameters) {
+void tapTask(void *pvParameters) {
   for (;;) {
     // Wait for the ISR to signal a tap event
     if (xSemaphoreTake(xTapSemaphore, portMAX_DELAY) == pdTRUE) {
@@ -56,7 +56,7 @@ void tapTaskCore0(void *pvParameters) {
 // -------------------------------------------------------------------
 // High Priority ADC Task (Core 1, Priority 4)
 // -------------------------------------------------------------------
-void adcTaskCore1(void *pvParameters) {
+void adcTask(void *pvParameters) {
   for (;;) {
     // Continuous sampling of all analog hardware registers
 #ifdef WHAMMY_ADC_PIN
@@ -85,7 +85,7 @@ void adcTaskCore1(void *pvParameters) {
 // -------------------------------------------------------------------
 // Highest Priority Button & Strum Task (Core 1, Priority 5)
 // -------------------------------------------------------------------
-void buttonTaskCore1(void *pvParameters) {
+void buttonTask(void *pvParameters) {
   // Variables for calibration logic
   static uint32_t     presetPressStartMs = 0;
   static bool         calibrationHandled = false;
@@ -216,7 +216,7 @@ void buttonTaskCore1(void *pvParameters) {
 // -------------------------------------------------------------------
 // Hall Effect Strum Task (Core 1, Priority 5)
 // -------------------------------------------------------------------
-void hallEffectStrumTaskCore1(void *pvParameters) {
+void hallEffectStrumTask(void *pvParameters) {
   // Too jittery? Increase CONFIRM_SAMPLES to 4 or 5 (adds ~4-5ms latency to initial trigger)
   // Too sluggish? Reduce EMA factor: change (filtered * 3 + raw) >> 2 to (filtered * 2 + raw * 2) >> 2 for less filtering
   // Hysteresis too aggressive? Lower 0.15f to 0.10f
@@ -404,9 +404,9 @@ void hallEffectStrumTaskCore1(void *pvParameters) {
 }
 
 // -------------------------------------------------------------------
-// NeoPixel Task (Core 0, Priority 1)
+// NeoPixel Task (Core 1, Priority 4)
 // -------------------------------------------------------------------
-void rgbTaskCore0(void *pvParameters) {
+void rgbTask(void *pvParameters) {
   uint16_t rainbowHue = 0;
   strip.begin();
 
@@ -515,7 +515,7 @@ void rgbTaskCore0(void *pvParameters) {
 // -------------------------------------------------------------------
 // ADXL345 Tilt Task (Core 0, Priority 1)
 // -------------------------------------------------------------------
-void tiltTaskCore0(void *pvParameters) {
+void tiltTask(void *pvParameters) {
   float smoothedPitch = 0.0f;
 
   for (;;) {
@@ -574,7 +574,7 @@ void tiltTaskCore0(void *pvParameters) {
 //   note: Does not reset sleep timeout
 //   note2: This task now also handles the pickup encoder
 // -------------------------------------------------------------------
-void whammyTaskCore0(void *pvParameters) {
+void whammyTask(void *pvParameters) {
   // Variables for Pickup Settling / Debouncing
   int samples[SAMPLE_COUNT];
   int lastMean = 0;
@@ -667,7 +667,7 @@ void whammyTaskCore0(void *pvParameters) {
 // -------------------------------------------------------------------
 // Battery Monitoring Task (Core 0, Priority 1)
 // -------------------------------------------------------------------
-void batteryTaskCore0(void *pvParameters) {
+void batteryTask(void *pvParameters) {
   uint32_t samples[SAMPLE_COUNT];
   uint32_t lastBatteryCheckMs = 0;
 
